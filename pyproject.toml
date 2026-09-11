@@ -1,0 +1,31 @@
+[project]
+name = "ivdc"
+version = "0.1.0"
+description = "Interactive video downloader & compressor powered by yt-dlp and ffmpeg (H.265 / AV1 / VP9, CUDA)"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "yt-dlp",
+    "rich",
+    "typer",
+]
+
+[project.scripts]
+ivdc = "ivdc.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ivdc"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q"
