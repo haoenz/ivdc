@@ -6,6 +6,7 @@ import shutil
 from pathlib import Path
 
 import pytest
+from rich.text import Text
 from typer.testing import CliRunner
 
 from ivdc import __version__
@@ -21,8 +22,9 @@ HAS_FFMPEG = bool(shutil.which("ffmpeg") and shutil.which("ffprobe"))
 def test_help_lists_every_command() -> None:
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == EXIT_OK
+    help_text = Text.from_ansi(result.stdout).plain
     for command in ("opt", "dl", "clean"):
-        assert command in result.stdout
+        assert command in help_text
 
 
 def test_version_flag() -> None:
@@ -81,10 +83,13 @@ def test_removed_options_are_not_aliases(option):
 
 def test_help_exposes_python_options():
     result = runner.invoke(app, ["opt", "--help"])
-    assert "--dry-run" in result.stdout
-    assert "--workers" in result.stdout
-    assert "--quality" in result.stdout
-    assert "--crf" not in result.stdout
+    assert result.exit_code == EXIT_OK
+    # CI 中 Typer 的 ANSI 样式可能将选项名拆开，按可见文本检查。
+    help_text = Text.from_ansi(result.stdout).plain
+    assert "--dry-run" in help_text
+    assert "--workers" in help_text
+    assert "--quality" in help_text
+    assert "--crf" not in help_text
 
 
 @pytest.mark.parametrize("quality", [None, *Quality])
