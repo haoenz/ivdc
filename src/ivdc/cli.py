@@ -141,8 +141,10 @@ def opt(
 def dl(
     tasks: Annotated[
         Path, typer.Option("--tasks", help="任务清单，每行「标题 URL」或「URL 标题」")
-    ] = Path("tbd.txt"),
-    done: Annotated[Path, typer.Option("--done", help="已完成记录")] = Path("d.txt"),
+    ] = Path("pending_downloads.txt"),
+    done: Annotated[Path, typer.Option("--done", help="已完成记录")] = Path(
+        "completed_downloads.txt"
+    ),
     maximum: Annotated[int | None, typer.Option("--max", min=1, help="本次最多处理条数")] = None,
     on_error: Annotated[OnError, typer.Option("--on-error", help="失败后的行为")] = OnError.stop,
     mask: Annotated[

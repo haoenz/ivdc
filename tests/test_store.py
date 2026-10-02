@@ -132,7 +132,7 @@ def test_clear_tmp_only_touches_state_directory(layout: IvdcLayout) -> None:
     (layout.tmp_dir / "a.mp4").write_text("partial", encoding="utf-8")
     (layout.tmp_dir / "b.mp4").write_text("partial", encoding="utf-8")
     # 下载任务的临时文件就在工作目录里，绝不能被顺手删掉（按 *.tmp 通配清理会误删）
-    stray = layout.root / "tbd.txt.tmp"
+    stray = layout.root / "pending_downloads.txt.tmp"
     stray.write_text("keep me", encoding="utf-8")
 
     result = clear_tmp(layout)

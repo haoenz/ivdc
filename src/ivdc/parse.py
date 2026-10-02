@@ -34,7 +34,7 @@ class TaskLine:
 
 
 def parse_task_line(line: str) -> TaskLine:
-    """解析 tbd.txt 的一行，标题与链接顺序可互换。
+    """解析 pending_downloads.txt 的一行，标题与链接顺序可互换。
 
     先按 ``http(s)://`` 定位链接，链接之外的部分算标题；定位不到链接时按「最后一个
     空格」切成标题 + 链接，切不出两部分就把整行当 URL。结果统一 strip。

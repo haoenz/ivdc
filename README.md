@@ -33,7 +33,7 @@ ivdc opt --dry-run                         # 只查看计划，不修改文件
 
 ## 下载视频
 
-在当前目录创建 `tbd.txt`，每行一个 URL，可附带标题：
+在当前目录创建 `pending_downloads.txt`，每行一个 URL，可附带标题：
 
 ```text
 https://example.com/video
@@ -41,12 +41,13 @@ https://example.com/video
 ```
 
 ```bash
-ivdc dl                                   # 读取 tbd.txt，完成记录写入 d.txt
+ivdc dl                                   # 读取 pending_downloads.txt，完成记录写入 completed_downloads.txt
 ivdc dl --tasks tasks.txt --done done.txt --max 5
 ivdc dl --on-error skip                    # 失败项移到队尾，继续后续任务
 ```
 
 成功项自动移出任务清单。默认遇到失败停止，失败项保留以便重试。
+已有任务清单和完成记录可重命名为上述默认名称，也可通过 `--tasks` 和 `--done` 指定路径。
 同一任务清单或视频目录请只运行一个写入任务。
 
 ## 清理文件

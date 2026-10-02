@@ -26,8 +26,8 @@ def _write_tasks(path: Path, *lines: str) -> None:
 
 def _options(tmp_path: Path, **kwargs: object) -> DownloadOptions:
     return DownloadOptions(
-        tasks=kwargs.pop("tasks", tmp_path / "tbd.txt"),  # type: ignore[arg-type]
-        done=kwargs.pop("done", tmp_path / "d.txt"),  # type: ignore[arg-type]
+        tasks=kwargs.pop("tasks", tmp_path / "pending_downloads.txt"),  # type: ignore[arg-type]
+        done=kwargs.pop("done", tmp_path / "completed_downloads.txt"),  # type: ignore[arg-type]
         **kwargs,  # type: ignore[arg-type]
     )
 
@@ -40,7 +40,7 @@ def test_missing_task_file_is_an_env_error(
 
 
 def test_empty_task_list_is_ok(console_pair: tuple[Console, StringIO], tmp_path: Path) -> None:
-    tasks = tmp_path / "tbd.txt"
+    tasks = tmp_path / "pending_downloads.txt"
     tasks.write_text("\n   \n", encoding="utf-8")
     console, stream = console_pair
 
@@ -54,9 +54,9 @@ def test_empty_task_list_is_ok(console_pair: tuple[Console, StringIO], tmp_path:
 def test_success_empties_list_and_appends_done_line(
     console_pair: tuple[Console, StringIO], tmp_path: Path
 ) -> None:
-    tasks = tmp_path / "tbd.txt"
+    tasks = tmp_path / "pending_downloads.txt"
     _write_tasks(tasks, "标题一 https://example.com/a")
-    done = tmp_path / "d.txt"
+    done = tmp_path / "completed_downloads.txt"
     console, _ = console_pair
     seen: list[str] = []
 
@@ -76,9 +76,9 @@ def test_success_empties_list_and_appends_done_line(
 def test_url_only_line_uses_probed_title_in_done_file(
     console_pair: tuple[Console, StringIO], tmp_path: Path
 ) -> None:
-    tasks = tmp_path / "tbd.txt"
+    tasks = tmp_path / "pending_downloads.txt"
     _write_tasks(tasks, "https://example.com/a")
-    done = tmp_path / "d.txt"
+    done = tmp_path / "completed_downloads.txt"
     console, _ = console_pair
 
     execute_download(
@@ -93,7 +93,7 @@ def test_url_only_line_uses_probed_title_in_done_file(
 def test_blank_lines_are_skipped_without_calling_the_fetcher(
     console_pair: tuple[Console, StringIO], tmp_path: Path
 ) -> None:
-    tasks = tmp_path / "tbd.txt"
+    tasks = tmp_path / "pending_downloads.txt"
     _write_tasks(tasks, "", "https://example.com/a", "   ")
     console, _ = console_pair
     seen: list[str] = []
@@ -109,9 +109,9 @@ def test_blank_lines_are_skipped_without_calling_the_fetcher(
 def test_stop_on_error_keeps_the_task_list_untouched(
     console_pair: tuple[Console, StringIO], tmp_path: Path
 ) -> None:
-    tasks = tmp_path / "tbd.txt"
+    tasks = tmp_path / "pending_downloads.txt"
     _write_tasks(tasks, "标题一 https://example.com/a", "https://example.com/b")
-    done = tmp_path / "d.txt"
+    done = tmp_path / "completed_downloads.txt"
     console, stream = console_pair
     attempts: list[str] = []
 
@@ -132,9 +132,9 @@ def test_stop_on_error_keeps_the_task_list_untouched(
 def test_skip_on_error_moves_the_failed_line_to_the_end(
     console_pair: tuple[Console, StringIO], tmp_path: Path
 ) -> None:
-    tasks = tmp_path / "tbd.txt"
+    tasks = tmp_path / "pending_downloads.txt"
     _write_tasks(tasks, "坏的 https://example.com/bad", "好的 https://example.com/ok")
-    done = tmp_path / "d.txt"
+    done = tmp_path / "completed_downloads.txt"
     console, _ = console_pair
 
     def fetcher(task, reporter):
@@ -152,7 +152,7 @@ def test_skip_on_error_moves_the_failed_line_to_the_end(
 
 
 def test_max_count_limits_attempts(console_pair: tuple[Console, StringIO], tmp_path: Path) -> None:
-    tasks = tmp_path / "tbd.txt"
+    tasks = tmp_path / "pending_downloads.txt"
     _write_tasks(tasks, "一 https://example.com/1", "二 https://example.com/2")
     console, _ = console_pair
     attempts: list[str] = []
@@ -171,7 +171,7 @@ def test_max_count_limits_attempts(console_pair: tuple[Console, StringIO], tmp_p
 def test_mask_mode_hides_the_real_title(
     console_pair: tuple[Console, StringIO], tmp_path: Path
 ) -> None:
-    tasks = tmp_path / "tbd.txt"
+    tasks = tmp_path / "pending_downloads.txt"
     _write_tasks(tasks, "真实标题 https://example.com/a")
     console, stream = console_pair
 
@@ -190,8 +190,8 @@ def test_mask_mode_hides_the_real_title(
 def test_done_file_is_appended_across_runs(
     console_pair: tuple[Console, StringIO], tmp_path: Path
 ) -> None:
-    tasks = tmp_path / "tbd.txt"
-    done = tmp_path / "d.txt"
+    tasks = tmp_path / "pending_downloads.txt"
+    done = tmp_path / "completed_downloads.txt"
     console, _ = console_pair
     fetcher = lambda task, reporter: DownloadResult(title="t", size_bytes=1)  # noqa: E731
 
@@ -224,7 +224,7 @@ def test_failed_rename_keeps_the_original_name_and_warns(
 
 
 def test_task_read_failure_is_not_reported_as_empty(console_pair, tmp_path, monkeypatch):
-    tasks = tmp_path / "tbd.txt"
+    tasks = tmp_path / "pending_downloads.txt"
     _write_tasks(tasks, "https://example.com/a")
 
     def denied(*args):
@@ -244,7 +244,7 @@ def test_task_read_failure_is_not_reported_as_empty(console_pair, tmp_path, monk
 def test_queue_write_failure_keeps_successful_task_for_retry(
     console_pair, tmp_path, monkeypatch, operation
 ):
-    tasks = tmp_path / "tbd.txt"
+    tasks = tmp_path / "pending_downloads.txt"
     lines = ["https://example.com/a", "https://example.com/b"]
     _write_tasks(tasks, *lines)
     seen = []
@@ -266,7 +266,7 @@ def test_queue_write_failure_keeps_successful_task_for_retry(
 
 
 def test_skip_with_limit_preserves_unattempted_then_failed(console_pair, tmp_path):
-    tasks = tmp_path / "tbd.txt"
+    tasks = tmp_path / "pending_downloads.txt"
     lines = [f"https://example.com/{i}" for i in range(4)]
     _write_tasks(tasks, *lines)
 
@@ -284,7 +284,7 @@ def test_skip_with_limit_preserves_unattempted_then_failed(console_pair, tmp_pat
 
 
 def test_interrupt_preserves_current_and_remaining_tasks(console_pair, tmp_path):
-    tasks = tmp_path / "tbd.txt"
+    tasks = tmp_path / "pending_downloads.txt"
     _write_tasks(tasks, "https://example.com/a", "https://example.com/b")
 
     def fetch(task, reporter):
@@ -295,4 +295,4 @@ def test_interrupt_preserves_current_and_remaining_tasks(console_pair, tmp_path)
     console, _ = console_pair
     assert execute_download(_options(tmp_path), console, fetcher=fetch) == EXIT_FAILURE
     assert read_lines(tasks) == ["https://example.com/b"]
-    assert read_lines(tmp_path / "d.txt") == ["a https://example.com/a"]
+    assert read_lines(tmp_path / "completed_downloads.txt") == ["a https://example.com/a"]

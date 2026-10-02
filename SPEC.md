@@ -27,8 +27,8 @@
 
 | 参数 | 默认 | 行为 |
 | --- | --- | --- |
-| `--tasks` | `tbd.txt` | UTF-8 任务清单，允许 BOM 和空行 |
-| `--done` | `d.txt` | 完成记录，不能与任务清单同路径 |
+| `--tasks` | `pending_downloads.txt` | UTF-8 任务清单，允许 BOM 和空行 |
+| `--done` | `completed_downloads.txt` | 完成记录，不能与任务清单同路径 |
 | `--max` | 无限制 | 最大尝试数，至少 1 |
 | `--on-error` | `stop` | `stop` 首项失败停止；`skip` 保留失败项并继续 |
 | `--mask` | 关 | 终端标题用随机标签，隐藏运行期错误及诊断中的名称、路径、URL |

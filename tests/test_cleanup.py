@@ -129,7 +129,7 @@ def test_files_outside_the_state_directory_are_never_touched(
 ) -> None:
     layout = _layout(tmp_path)
     _populate(layout)
-    stray = layout.root / "tbd.txt.tmp"
+    stray = layout.root / "pending_downloads.txt.tmp"
     stray.write_text("keep", encoding="utf-8")
     console, _ = console_pair
 

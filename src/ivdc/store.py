@@ -201,7 +201,7 @@ def clear_tmp(layout: IvdcLayout) -> TmpClear:
     """清掉临时输出目录里的残留，返回「删掉几个 / 几个没删掉」。
 
     只动 ``.ivdc/tmp/``——这个目录从构造上就只属于本工具，所以不会误伤工作目录里
-    恰好以 ``.tmp`` 结尾的无关文件（比如下载用的 ``tbd.txt.tmp``）。
+    恰好以 ``.tmp`` 结尾的无关文件（比如下载用的 ``pending_downloads.txt.tmp``）。
     """
     tmp_dir = layout.tmp_dir
     if not tmp_dir.is_dir():
