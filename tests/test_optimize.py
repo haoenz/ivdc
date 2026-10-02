@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -376,6 +377,19 @@ def test_segmented_resume_reuses_valid_segments(
     )
 
     console, stream = console_pair
+    stat = layout.backup("长片.mp4").stat()
+    (layout.seg_dir("长片.mp4") / "resume.json").write_text(
+        json.dumps(
+            {
+                "source_size": stat.st_size,
+                "source_mtime_ns": stat.st_mtime_ns,
+                "codec": "hevc",
+                "encoder_args": ["-c:v", "libx265", "-tag:v", "hvc1", "-crf", "28"],
+                "segments": [[0, 60], [60, 10]],
+            }
+        ),
+        encoding="utf-8",
+    )
     code = execute_optimize(_options(videos, segment_minutes=1, debug=True, workers=1), console)
 
     assert code == EXIT_OK

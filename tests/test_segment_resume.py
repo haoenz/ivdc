@@ -330,3 +330,60 @@ def test_fractional_frame_rate_at_actual_minute_boundary(tmp_path, console_pair)
         == EXIT_OK
     ), output.getvalue()
     assert video_duration(source) == pytest.approx(duration, abs=0.001)
+
+
+@pytest.mark.parametrize("identity", ["missing", "missing_with_receipt", "legacy_with_receipt"])
+def test_untrusted_legacy_picture_cannot_replace_current_source(media, console_pair, identity):
+    from ivdc.segment_state import SegmentContext
+
+    source, layout, options = media
+    source.unlink()
+    ffmpeg(
+        "-f", "lavfi", "-i", "color=red:size=64x64:rate=10:duration=1", "-c:v", "libx264", source
+    )
+    target = layout.seg(source.name, 0)
+    target.parent.mkdir(parents=True)
+    ffmpeg(
+        "-f", "lavfi", "-i", "color=blue:size=64x64:rate=10:duration=1", "-c:v", "libx265", target
+    )
+    old = target.read_bytes()
+    if identity != "missing":
+        SegmentContext("different-source").publish(target, target, 0)
+    if identity == "legacy_with_receipt":
+        stat = source.stat()
+        (target.parent / "resume.json").write_text(
+            json.dumps(
+                {
+                    "source_size": stat.st_size,
+                    "source_mtime_ns": stat.st_mtime_ns,
+                    "codec": "hevc",
+                    "encoder_args": ["-c:v", "libx265", "-tag:v", "hvc1", "-crf", "28"],
+                    "segments": [[0, 1]],
+                }
+            ),
+            encoding="utf-8",
+        )
+    assert execute_optimize(options, console_pair[0]) == EXIT_OK, console_pair[1].getvalue()
+    assert any(path.read_bytes() == old for path in layout.segs_dir.glob("*/seg_000.mp4"))
+    frame = subprocess.run(
+        [
+            FFMPEG,
+            "-v",
+            "error",
+            "-i",
+            str(source),
+            "-frames:v",
+            "1",
+            "-vf",
+            "scale=1:1",
+            "-pix_fmt",
+            "rgb24",
+            "-f",
+            "rawvideo",
+            "-",
+        ],
+        check=True,
+        capture_output=True,
+    ).stdout
+    assert frame[0] > 200 and frame[2] < 10  # 必须仍是当前源的红色，而非旧片的蓝色。
+    assert not layout.backup(source.name).exists()

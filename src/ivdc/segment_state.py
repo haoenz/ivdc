@@ -89,13 +89,14 @@ def prepare_segments(layout: IvdcLayout, config: EncodingConfig, task: VideoTask
         "hwaccel_args": list(config.hwaccel_args),
         "stream_policy": "video_segments_original_tracks_v1",
     }
-    legacy = not metadata_path.exists()
-    if not legacy:
+    # 缺少身份不是旧版身份：仅明确匹配的历史元数据允许升级复用。
+    legacy = False
+    if metadata_path.exists():
         try:
             previous = json.loads(metadata_path.read_text(encoding="utf-8-sig"))
         except (ValueError, UnicodeError) as exc:
             raise MediaError(f"无法读取断点元数据 {metadata_path}: {exc}") from exc
-        legacy = previous == legacy_metadata
+        legacy = previous == legacy_metadata and not any(directory.glob("*.complete.json"))
         if previous != metadata and not legacy:
             archive = directory.with_name(f"{directory.name}.resume-{uuid.uuid4().hex}")
             os.replace(directory, archive)

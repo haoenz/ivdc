@@ -267,6 +267,19 @@ def test_legacy_single_audio_segments_do_not_lose_original_tracks(
             layout.seg(source.name, index),
         )
     before = sorted(nonvideo_packets(source))
+    stat = source.stat()
+    (layout.seg_dir(source.name) / "resume.json").write_text(
+        json.dumps(
+            {
+                "source_size": stat.st_size,
+                "source_mtime_ns": stat.st_mtime_ns,
+                "codec": "hevc",
+                "encoder_args": ["-c:v", "libx265", "-tag:v", "hvc1", "-crf", "28"],
+                "segments": [[0, 1], [1, 1], [2, 1]],
+            }
+        ),
+        encoding="utf-8",
+    )
     monkeypatch.setattr(Encoder, "encode", lambda *args: pytest.fail("完整旧分片应复用视频"))
     console, output = console_pair
     assert execute_optimize(options(source, 1, monkeypatch), console) == EXIT_OK, output.getvalue()
