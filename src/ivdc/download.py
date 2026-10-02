@@ -1,5 +1,6 @@
 """下载业务与任务队列；外部协议解析在 ytdlp 模块，终端显示在 views 模块。"""
 
+import logging
 import time
 from collections import deque
 from collections.abc import Callable
@@ -129,6 +130,7 @@ def run_download(
         try:
             result = fetch(task, events.progress)
         except DownloadFailed as exc:
+            logging.getLogger(__name__).debug("下载失败 (%s): %s", task.url, exc, exc_info=True)
             failures.append(str(exc))
             events.failed(label, str(exc))
             if options.on_error == OnError.stop:

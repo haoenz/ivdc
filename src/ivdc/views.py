@@ -5,6 +5,7 @@ import math
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
+from copy import copy
 
 from rich.console import Console
 from rich.logging import RichHandler
@@ -28,12 +29,34 @@ from ivdc.optimize import OptimizationEvents, OptimizationResult
 from ivdc.progress import ProgressDisplay
 
 
+def error_message(message: str, *, mask: bool, summary: str = "操作失败") -> str:
+    """外部错误可能含任意路径或 URL；匿名时只显示由展示层提供的固定说明。"""
+    return f"{summary}；详细信息已隐藏（--mask）。" if mask else message
+
+
+class MaskedDiagnostics(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> logging.LogRecord:
+        # 仅替换当前终端 handler 的副本；文件 handler 仍收到完整上下文。
+        masked = copy(record)
+        masked.msg = "诊断详情已隐藏（--mask）；关闭 --mask 可查看。"
+        masked.args = ()
+        masked.exc_info = None
+        masked.exc_text = None
+        masked.stack_info = None
+        return masked
+
+
 @contextmanager
-def diagnostics(console: Console, debug: bool = False) -> Iterator[None]:
+def diagnostics(console: Console, debug: bool = False, *, mask: bool = False) -> Iterator[None]:
     logger = logging.getLogger("ivdc")
     previous = logger.level
+    previous_propagate = logger.propagate
     handler = RichHandler(console=console, show_time=False, show_path=False, markup=False)
-    handler.setLevel(logging.DEBUG if debug else logging.WARNING)
+    handler.setLevel(logging.DEBUG if debug and not mask else logging.WARNING)
+    if mask:
+        handler.addFilter(MaskedDiagnostics())
+        # 根 logger 的控制台 handler 不能绕过匿名展示；ivdc 的文件 handler 不受影响。
+        logger.propagate = False
     logger.addHandler(handler)
     logger.setLevel(logging.DEBUG if debug else logging.INFO)
     try:
@@ -42,6 +65,7 @@ def diagnostics(console: Console, debug: bool = False) -> Iterator[None]:
         logger.removeHandler(handler)
         handler.close()
         logger.setLevel(previous)
+        logger.propagate = previous_propagate
 
 
 class OptimizationDisplay:
@@ -70,13 +94,12 @@ class OptimizationDisplay:
         for label in plan.skipped:
             emit(self.console, f"跳过: {label} (已是 {codec} 编码)", STYLE_SKIP)
         if not plan.tasks:
-            emit(
-                self.console,
-                "所有视频已是目标编码，无需处理。"
-                if plan.skipped
-                else f"未找到匹配的文件: {self.options.pattern}",
-                STYLE_INFO,
-            )
+            message = "未找到匹配的视频文件。"
+            if plan.skipped:
+                message = "所有视频已是目标编码，无需处理。"
+            elif not self.options.mask:
+                message = f"未找到匹配的文件: {self.options.pattern}"
+            emit(self.console, message, STYLE_INFO)
         self.total = len(plan.tasks)
         if self.options.dry_run:
             for name in plan.recoveries:
@@ -85,7 +108,13 @@ class OptimizationDisplay:
             emit(self.console, f"将要处理 {len(plan.tasks)} 个文件（编码 {codec}）:")
             for task in plan.tasks:
                 details = f"，{len(task.segments)} 片" if task.segments else ""
-                emit(self.console, f"  {task.label} {task.duration:.1f}s{details}{task.error}")
+                error = (
+                    ", "
+                    + error_message(task.error, mask=self.options.mask, summary="无法处理此文件")
+                    if task.error
+                    else ""
+                )
+                emit(self.console, f"  {task.label} {task.duration:.1f}s{details}{error}")
             emit(self.console, "（--dry-run 不做任何修改）", STYLE_SKIP)
             return
         for task in plan.tasks:
@@ -145,7 +174,7 @@ class OptimizationDisplay:
                 STYLE_DONE,
             )
         else:
-            message = "详见处理日志" if self.options.mask else record.message
+            message = error_message(record.message, mask=self.options.mask, summary="详见处理日志")
             self.display.log(f"压制失败 ({label}): {message}", STYLE_FAIL)
 
     def summary(self, result: OptimizationResult) -> None:
@@ -153,7 +182,11 @@ class OptimizationDisplay:
             return
         succeeded = sum(record.status == STATUS_OK for record in result.records)
         for failure in result.failures:
-            emit(self.console, failure, STYLE_WARN)
+            emit(
+                self.console,
+                error_message(failure, mask=self.options.mask, summary="恢复或清理失败"),
+                STYLE_WARN,
+            )
         emit(
             self.console,
             f"完成: 成功 {succeeded} 个，失败 {len(result.records) - succeeded} 个。",
@@ -162,8 +195,9 @@ class OptimizationDisplay:
 
 
 class DownloadDisplay:
-    def __init__(self, display: ProgressDisplay) -> None:
+    def __init__(self, display: ProgressDisplay, *, mask: bool = False) -> None:
         self.display = display
+        self.mask = mask
         self.task_id: TaskID | None = None
         self.completed = 0
         self.total = 0
@@ -213,7 +247,8 @@ class DownloadDisplay:
 
     def failed(self, label: str, error: str) -> None:
         self._remove()
-        self.display.log(f"✗ {label} 下载失败: {error}", STYLE_FAIL)
+        message = error_message(error, mask=self.mask, summary="关闭 --mask 可查看错误详情")
+        self.display.log(f"✗ {label} 下载失败: {message}", STYLE_FAIL)
 
     def summary(self, result: DownloadReport, *, stop: bool) -> None:
         if result.attempted == 0:

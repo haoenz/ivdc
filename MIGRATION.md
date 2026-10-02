@@ -70,6 +70,12 @@ Python 调用方从 `ivdc.optimization_plan` 导入 `OptimizeOptions`，从 `ivd
 - GPU 可用性必须通过 `nvidia-smi -L` 探测，不再将 Windows 上仅存在 nvcuda.dll 当作有卡。
   Windows 也会检查 System32 下的 nvidia-smi.exe；工具不可用时降级 CPU。
 - 正常终端摘要仍保留体积、耗时和完成状态；诊断采用 logging，调试输出格式可能变化。
+- `--mask` 现在同时隐藏运行期错误和终端诊断中的文件名、路径、标题及 URL，
+  `--mask --debug` 也不会在终端暴露原文。非匿名模式继续显示完整详情。
+  压制日志、manifest、下载清单及业务结果仍保存原始内容，不自动匿名化这些文件。
+  下载默认无日志文件；dry-run 与启动前失败不为诊断新增写入，需要终端详情时关闭 mask。
+  嵌入式调用使用匿名 CLI 时，ivdc 暂停向根 logger 传播日志；如需独立文件记录，应将
+  文件 handler 挂在 ivdc logger，运行退出后原日志设置会恢复。
 - 自定义 `--log` 现在在处理前检查路径冲突：不能占用当前输入、待恢复文件、manifest，
   或写入 `.ivdc/backups`、`.ivdc/segs`、`.ivdc/tmp`；`.ivdc/` 内仅允许写入 `logs/`。
   符号链接与硬链接同样校验，dry-run 也会对冲突返回退出码 2。

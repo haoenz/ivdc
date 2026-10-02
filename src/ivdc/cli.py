@@ -31,7 +31,13 @@ from ivdc.optimize import run_optimize
 from ivdc.progress import ProgressDisplay
 from ivdc.quality import Quality
 from ivdc.runner import CommandError, RunCancelled
-from ivdc.views import DownloadDisplay, OptimizationDisplay, diagnostics, show_cleanup
+from ivdc.views import (
+    DownloadDisplay,
+    OptimizationDisplay,
+    diagnostics,
+    error_message,
+    show_cleanup,
+)
 
 __all__ = ["app", "main", "Codec", "CudaMode", "OnError"]
 
@@ -102,7 +108,9 @@ def opt(
             "--keep-backup/--no-keep-backup", help="成功后保留本次新建备份；已有备份始终保留"
         ),
     ] = True,
-    mask: Annotated[bool, typer.Option("--mask", help="用随机串代替真实文件名")] = False,
+    mask: Annotated[
+        bool, typer.Option("--mask", help="匿名显示文件名、错误和终端诊断；debug 不取消匿名")
+    ] = False,
     debug: Annotated[bool, typer.Option("--debug", help="打印底层命令与诊断信息")] = False,
     dry_run: Annotated[
         bool, typer.Option("--dry-run", help="只读计划，不恢复、清理或写入任何文件")
@@ -137,7 +145,9 @@ def dl(
     done: Annotated[Path, typer.Option("--done", help="已完成记录")] = Path("d.txt"),
     maximum: Annotated[int | None, typer.Option("--max", min=1, help="本次最多处理条数")] = None,
     on_error: Annotated[OnError, typer.Option("--on-error", help="失败后的行为")] = OnError.stop,
-    mask: Annotated[bool, typer.Option("--mask", help="用随机串代替真实标题")] = False,
+    mask: Annotated[
+        bool, typer.Option("--mask", help="匿名显示标题、URL、错误和终端诊断；debug 不取消匿名")
+    ] = False,
     debug: Annotated[bool, typer.Option("--debug", help="打印底层命令与诊断信息")] = False,
 ) -> None:
     """按任务清单逐条下载（清单会随完成情况原子写回）。"""
@@ -181,18 +191,27 @@ class Outcome(Protocol):
     def failed(self) -> bool: ...
 
 
-def execute(operation: Callable[[], Outcome], console: Console) -> int:
+def execute(operation: Callable[[], Outcome], console: Console, *, mask: bool = False) -> int:
     """唯一的业务异常到退出码边界；保留异常日志与具体错误上下文。"""
     try:
         return EXIT_FAILURE if operation().failed else EXIT_OK
     except SetupError as exc:
-        emit(console, str(exc), STYLE_ERROR)
+        emit(
+            console,
+            error_message(str(exc), mask=mask, summary="参数、配置或运行环境检查失败"),
+            STYLE_ERROR,
+        )
+        logging.getLogger(__name__).debug("启动检查失败", exc_info=True)
         return EXIT_ENV
     except KeyboardInterrupt, RunCancelled:
         emit(console, "已中断。子进程已回收；未完成的任务与分片保留，下次运行可继续。", STYLE_ERROR)
         return EXIT_FAILURE
     except (StorageError, CommandError, OSError, UnicodeError) as exc:
-        emit(console, str(exc), STYLE_ERROR)
+        emit(
+            console,
+            error_message(str(exc), mask=mask, summary="文件操作或外部命令执行失败"),
+            STYLE_ERROR,
+        )
         logging.getLogger(__name__).debug("运行失败", exc_info=True)
         return EXIT_FAILURE
     except Exception:
@@ -203,7 +222,7 @@ def execute(operation: Callable[[], Outcome], console: Console) -> int:
 
 def execute_optimize(options: OptimizeOptions, console: Console) -> int:
     with (
-        diagnostics(console, options.debug),
+        diagnostics(console, options.debug, mask=options.mask),
         ProgressDisplay(console, title_prefix="Optimizing") as progress,
     ):
         view = OptimizationDisplay(options, console, progress)
@@ -213,24 +232,24 @@ def execute_optimize(options: OptimizeOptions, console: Console) -> int:
             view.summary(result)
             return result
 
-        return execute(operation, console)
+        return execute(operation, console, mask=options.mask)
 
 
 def execute_download(
     options: DownloadOptions, console: Console, *, fetcher: Fetcher | None = None
 ) -> int:
     with (
-        diagnostics(console, options.debug),
+        diagnostics(console, options.debug, mask=options.mask),
         ProgressDisplay(console, title_prefix="Downloading") as progress,
     ):
-        view = DownloadDisplay(progress)
+        view = DownloadDisplay(progress, mask=options.mask)
 
         def operation() -> Outcome:
             result = run_download(options, view.events, fetcher=fetcher)
             view.summary(result, stop=options.on_error == OnError.stop)
             return result
 
-        return execute(operation, console)
+        return execute(operation, console, mask=options.mask)
 
 
 def execute_clean(options: CleanOptions, console: Console) -> int:

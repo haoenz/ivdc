@@ -214,7 +214,7 @@ def run_optimize(
             for name in recovery.restored:
                 events.notice(f"恢复上次中断的源文件: {name if not options.mask else '已恢复'}")
             for error in recovery.failures:
-                events.notice(error)
+                logging.getLogger(__name__).warning("%s", error)
             cleared = clear_tmp(layout)
             failures = list(recovery.failures)
             if cleared.failed:
