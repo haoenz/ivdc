@@ -91,7 +91,7 @@ def prepare_segments(layout: IvdcLayout, config: EncodingConfig, task: VideoTask
         "video_offset": task.media.video_offset if task.media else 0.0,
         "display_policy": "autorotate_pixels_v1",
     }
-    # 缺少身份不是旧版身份：仅明确匹配的历史元数据允许升级复用。
+    # 无版本号的元数据也必须明确匹配任务身份，才能校验并复用分片。
     legacy = False
     if metadata_path.exists():
         try:

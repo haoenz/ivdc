@@ -65,7 +65,9 @@ def load_config(path: Path | None = None) -> Config:
             raise ValueError("根节点必须是对象")
         unknown = payload.keys() - {"impersonate_domains", "impersonate_target", "quality_profiles"}
         if unknown:
-            raise ValueError(f"未知配置键: {', '.join(sorted(unknown))}；请参阅 MIGRATION.md")
+            raise ValueError(
+                f"未知配置键: {', '.join(sorted(unknown))}；请参阅 config.example.json"
+            )
         domains = payload.get("impersonate_domains", [])
         if not isinstance(domains, list) or any(
             not isinstance(item, str) or not item.strip() for item in domains

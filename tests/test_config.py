@@ -128,10 +128,12 @@ def test_linux_honours_xdg_and_ignores_windows_appdata(tmp_path, monkeypatch):
     assert default_config_path() == tmp_path / "xdg/ivdc/config.json"
 
 
-def test_legacy_config_keys_require_explicit_migration(tmp_path):
+def test_unknown_config_key_points_to_example(tmp_path):
     path = tmp_path / "config.json"
-    path.write_text('{"impersonateDomains": []}', encoding="utf-8")
-    with pytest.raises(SetupError, match="MIGRATION.md"):
+    path.write_text('{"unknown_option": []}', encoding="utf-8")
+    with pytest.raises(
+        SetupError, match=r"未知配置键: unknown_option；请参阅 config\.example\.json"
+    ):
         load_config(path)
 
 
