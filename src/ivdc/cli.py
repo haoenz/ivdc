@@ -91,7 +91,9 @@ def opt(
     ] = DEFAULT_SEGMENT_MINUTES,
     log: Annotated[
         Path | None,
-        typer.Option("--log", help="日志文件，默认 .ivdc/logs/YYYY-MM-DD.log"),
+        typer.Option(
+            "--log", help="日志文件，默认 .ivdc/logs/YYYY-MM-DD.log；不可与输入或状态文件冲突"
+        ),
     ] = None,
     keep_backup: Annotated[
         bool,

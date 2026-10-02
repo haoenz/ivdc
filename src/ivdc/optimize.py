@@ -4,15 +4,22 @@ import time
 from collections.abc import Callable
 from concurrent.futures import as_completed
 from dataclasses import dataclass, replace
+from itertools import chain
 
 from ivdc.encode import resolve_encode_config
 from ivdc.encoding import Encoder, ProgressCallback, SegmentResult
 from ivdc.errors import MediaError, SetupError
 from ivdc.fs import STATUS_FAILED, STATUS_OK, FileRecord, IvdcLayout
-from ivdc.optimization_plan import OptimizationPlan, OptimizeOptions, VideoTask, build_plan
+from ivdc.optimization_plan import (
+    OptimizationPlan,
+    OptimizeOptions,
+    VideoTask,
+    build_plan,
+    collect_files,
+)
 from ivdc.probe_runtime import find_toolchain, probe_environment
 from ivdc.records import ResultRecorder
-from ivdc.recovery import FileTransaction, recover_backups
+from ivdc.recovery import FileTransaction, pending_backups, recover_backups
 from ivdc.runner import CommandError, ProcessRunner, worker_pool
 from ivdc.segment_state import SegmentContext, prepare_segments
 from ivdc.store import (
@@ -21,6 +28,7 @@ from ivdc.store import (
     now_iso,
     remove_tree,
     resolve_log_path,
+    validate_log_path,
     validate_state_directory,
 )
 
@@ -164,6 +172,14 @@ def run_optimize(
         raise SetupError(f"路径不存在或不是目录: {root}")
     layout = IvdcLayout(root)
     validate_state_directory(layout)
+    log_path = validate_log_path(
+        layout,
+        resolve_log_path(layout, options.log_file),
+        chain(
+            collect_files(root, options.pattern),
+            (root / name for name in pending_backups(layout)),
+        ),
+    )
     # 在任何恢复或清理之前校验持久化数据。损坏时保留原文件并报告。
     manifest = load_manifest(layout)
     with ProcessRunner() as runner:
@@ -187,9 +203,7 @@ def run_optimize(
             )
         if not plan.tasks and not plan.recoveries and not plan.temporary_files:
             return OptimizationResult(plan)
-        with ResultRecorder(
-            layout, manifest, resolve_log_path(layout, options.log_file), options.debug
-        ) as recorder:
+        with ResultRecorder(layout, manifest, log_path, options.debug) as recorder:
             recovery = recover_backups(layout)
             for name in recovery.restored:
                 events.notice(f"恢复上次中断的源文件: {name if not options.mask else '已恢复'}")

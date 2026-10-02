@@ -13,8 +13,9 @@ import json
 import logging
 import os
 import shutil
+import stat
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 from itertools import chain
@@ -41,6 +42,7 @@ __all__ = [
     "remove_tree",
     "resolve_log_path",
     "save_manifest",
+    "validate_log_path",
     "write_lines",
 ]
 
@@ -132,6 +134,67 @@ def resolve_log_path(
     if requested is None:
         return layout.log(day or date.today())
     return requested if requested.is_absolute() else Path.cwd() / requested
+
+
+def validate_log_path(layout: IvdcLayout, path: Path, sources: Iterable[Path]) -> Path:
+    """只读检查日志与输入、恢复目标及工作状态的冲突，返回实际写入路径。
+
+    单写入者约定下，在所有文件修改前调用；不存在的目标也按保留路径检查。
+    已有文件还比较设备与 inode，避免硬链接绕过路径比较。
+    """
+    try:
+        target = path.resolve()
+        state, logs = layout.state_dir.resolve(), layout.logs_dir.resolve()
+        reserved = (layout.backups_dir, layout.segs_dir, layout.tmp_dir)
+        # 检查已有父目录的身份，兼顾目录别名及不区分大小写的文件系统。
+        reserved_ids = {
+            (info.st_dev, info.st_ino)
+            for directory in reserved
+            if (info := _stat_if_present(directory)) is not None
+        }
+        if (
+            target == logs
+            or state.is_relative_to(target)
+            or (target.is_relative_to(state) and not target.is_relative_to(logs))
+        ):
+            raise SetupError(f"日志路径与工作状态冲突: {path}；.ivdc 内仅允许写入 logs 子目录")
+        for parent in target.parents:
+            info = _stat_if_present(parent)
+            if info is None:
+                continue
+            if (info.st_dev, info.st_ino) in reserved_ids:
+                raise SetupError(f"日志路径位于备份、分片或临时输出目录: {path}")
+            if not stat.S_ISDIR(info.st_mode):
+                raise SetupError(f"日志父路径不是目录: {parent}")
+        target_info = _stat_if_present(target)
+        if target_info is not None and not stat.S_ISREG(target_info.st_mode):
+            raise SetupError(f"日志路径不是普通文件: {path}")
+        protected = chain(
+            sources,
+            (layout.manifest_path,),
+            *(directory.rglob("*") for directory in reserved),
+        )
+        for source in protected:
+            resolved = source.resolve()
+            if target.is_relative_to(resolved) or resolved.is_relative_to(target):
+                raise SetupError(f"日志路径与输入或状态文件冲突: {path} -> {source}")
+            if target_info is not None:
+                source_info = _stat_if_present(source)
+                if source_info is not None and (target_info.st_dev, target_info.st_ino) == (
+                    source_info.st_dev,
+                    source_info.st_ino,
+                ):
+                    raise SetupError(f"日志路径与输入或状态文件指向同一文件: {path} -> {source}")
+        return target
+    except OSError as exc:
+        raise SetupError(f"无法校验日志路径 {path}: {exc}") from exc
+
+
+def _stat_if_present(path: Path) -> os.stat_result | None:
+    try:
+        return path.stat()
+    except FileNotFoundError:
+        return None
 
 
 def clear_tmp(layout: IvdcLayout) -> TmpClear:

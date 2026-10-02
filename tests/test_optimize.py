@@ -173,6 +173,52 @@ def test_log_and_manifest_are_written(
     assert record.new_bytes > 0
 
 
+@pytest.mark.parametrize("segment_minutes", [0, 1])
+def test_custom_log_appends_without_affecting_backup(
+    console_pair,
+    sample,
+    videos,
+    tmp_path,
+    monkeypatch,
+    segment_minutes,
+):
+    log = tmp_path / "reports" / "run.log"
+    log.parent.mkdir()
+    log.write_text("previous record\n", encoding="utf-8")
+    original = sample.read_bytes()
+    monkeypatch.chdir(tmp_path)
+    console, output = console_pair
+    assert (
+        execute_optimize(
+            _options(videos, segment_minutes=segment_minutes, log_file=Path("reports/run.log")),
+            console,
+        )
+        == EXIT_OK
+    ), output.getvalue()
+    assert log.read_text(encoding="utf-8").startswith("previous record\n")
+    assert SAMPLE in log.read_text(encoding="utf-8")
+    assert IvdcLayout(videos).backup(SAMPLE).read_bytes() == original
+    assert _codec(sample) == "hevc"
+
+
+def test_log_backup_collision_is_cli_setup_error_without_losing_original(
+    console_pair, sample, videos
+):
+    layout = IvdcLayout(videos)
+    original = sample.read_bytes()
+    console, output = console_pair
+    assert (
+        execute_optimize(
+            _options(videos, log_file=layout.backup(SAMPLE)),
+            console,
+        )
+        == EXIT_ENV
+    )
+    assert "日志路径" in output.getvalue()
+    assert sample.read_bytes() == original
+    assert not layout.state_dir.exists()
+
+
 def test_second_run_skips_files_already_in_target_codec(
     console_pair: tuple[Console, StringIO], sample: Path, videos: Path
 ) -> None:

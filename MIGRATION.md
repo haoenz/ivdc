@@ -47,5 +47,9 @@ Python 调用方从 `ivdc.optimization_plan` 导入 `OptimizeOptions`，从 `ivd
 - GPU 可用性必须通过 `nvidia-smi -L` 探测，不再将 Windows 上仅存在 nvcuda.dll 当作有卡。
   Windows 也会检查 System32 下的 nvidia-smi.exe；工具不可用时降级 CPU。
 - 正常终端摘要仍保留体积、耗时和完成状态；诊断采用 logging，调试输出格式可能变化。
+- 自定义 `--log` 现在在处理前检查路径冲突：不能占用当前输入、待恢复文件、manifest，
+  或写入 `.ivdc/backups`、`.ivdc/segs`、`.ivdc/tmp`；`.ivdc/` 内仅允许写入 `logs/`。
+  符号链接与硬链接同样校验，dry-run 也会对冲突返回退出码 2。
+  需要调整冲突路径时，可使用 `.ivdc/logs/custom.log` 或普通的外部日志路径。
 
 BOM 输入、Windows 文件名处理、Windows 终端功能、CUDA/NVENC 和外部工具协议继续保留。
