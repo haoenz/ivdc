@@ -94,12 +94,16 @@ def test_task_labels_and_progress_are_rendered() -> None:
 
 def test_remove_task_stops_rendering_it() -> None:
     console, stream = _terminal_console()
-    display = ProgressDisplay(console, refresh_interval=5.0)
-    display.start()
-    task_id = display.add_task("gone.mp4")
-    display.remove_task(task_id)
-    display.close()
-    assert "gone.mp4" not in stream.getvalue()
+    with ProgressDisplay(console, refresh_interval=5.0) as display:
+        task_id = display.add_task("gone.mp4")
+        display.add_task("kept.mp4")
+        display.remove_task(task_id)
+        # Rich renders when adding tasks; only inspect output after removal.
+        stream.seek(0)
+        stream.truncate(0)
+    text = stream.getvalue()
+    assert "gone.mp4" not in text
+    assert "kept.mp4" in text
 
 
 def test_non_terminal_console_writes_no_osc_sequences() -> None:

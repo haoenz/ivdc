@@ -21,10 +21,11 @@ uv sync --locked
 uv run ruff format --check .
 uv run ruff check .
 uv run pyright
-uv run pytest
-uv run pytest -m integration -rs
+uv run --locked pytest -rs
 ```
 
+完整 pytest 已包含集成测试；日常开发可用 `uv run --locked pytest -m "not integration"`
+快速验证，或用 `uv run --locked pytest -m integration -rs` 单独运行集成测试。
 集成测试使用临时目录生成小视频，真实调用 ffmpeg，不接触个人视频和下载清单。
 缺少工具的跳过不代表验证通过。CUDA/NVENC、Windows 控制台和公网下载须在对应环境另行验证。
 
@@ -35,16 +36,22 @@ uv sync --locked
 git config --local core.hooksPath .githooks
 ```
 
-`pre-commit` 检查暂存区空白错误、锁文件一致性、Ruff 格式与 lint、Pyright 类型；
-`pre-push` 重跑这些检查，并要求 PATH 中存在 ffmpeg 和 ffprobe，然后运行完整 pytest，
-其中已经包含真实 ffmpeg 集成测试，不重复执行。任一命令失败都会阻止提交或推送。
-hooks 只检查，不自动格式化、暂存或 stash；可分别用 `sh .githooks/pre-commit` 和
-`sh .githooks/pre-push` 手动运行。Git for Windows 使用随附的 shell 执行它们。
+`pre-commit` 检查暂存区空白错误、锁文件一致性、Ruff 格式与 lint、Pyright 类型，
+任一命令失败都会阻止提交。本地不再设置 `pre-push` 检查，推送不等待测试。
+hook 只检查，不自动格式化、暂存或 stash；可用 `sh .githooks/pre-commit` 手动运行。
+Git for Windows 使用随附的 shell 执行它。
+
+[GitHub Actions CI](.github/workflows/ci.yml) 在 push、pull request 或手动触发时，
+使用 Ubuntu 24.04、Python 3.14 和锁定依赖执行静态检查，安装并验证 ffmpeg/ffprobe，
+再运行包含真实媒体集成测试的完整 pytest，报告跳过原因和最慢的 10 项测试。
+依赖使用 uv 缓存，同一事件和分支的新运行会取消尚未完成的旧运行。
+若要强制合并前通过验证，需在 GitHub 分支保护或规则集中将 `Checks and tests`
+设为必需检查；工作流文件本身不会设置仓库的合并规则。
 
 除暂存区空白检查外，检查对象是当前工作区，不是暂存区快照或推送的每个历史提交。
-部分暂存、推送其它分支时，需要另行验证实际提交内容。pytest 会列出跳过原因；
-例如 Windows 上的 POSIX SIGINT 测试会跳过，hooks 通过不代表这些环境能力已验证。
-架构审查、文档与行为一致性仍需人工审查；本地 hooks 也不能替代 CI。
+部分暂存时，需结合 CI 验证实际提交内容。pytest 会列出跳过原因；
+例如 Windows 上的 POSIX SIGINT 测试会跳过，CI 也不验证 CUDA/NVENC、Windows 控制台和公网下载。
+架构审查、文档与行为一致性仍需人工审查；本地 hook 不能替代 CI。
 启用前若已有自定义 `core.hooksPath`，请合并已有检查；移除本仓库配置可用
 `git config --local --unset core.hooksPath`。
 

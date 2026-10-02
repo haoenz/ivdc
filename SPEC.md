@@ -180,9 +180,12 @@ ffmpeg 成功却丢失媒体流时拒绝提交。
 测试跳过不能当作已验证。硬件、操作系统终端和公网下载的实际覆盖应单独报告。
 
 仓库的 `.githooks/pre-commit` 自动检查暂存区空白、锁文件、格式、lint 和类型；
-`.githooks/pre-push` 再要求 ffmpeg/ffprobe 可用并运行含集成测试的完整 pytest。
-这些 hooks 检查当前工作区，不能证明部分暂存或其它分支的提交已验证；
-测试跳过仍是未验证项，不因 hook 返回成功而改变。启用方法与边界见 README。
+本地不再设置 `pre-push` 检查。`.github/workflows/ci.yml` 在 push 和 pull request 时
+使用 Ubuntu 24.04、Python 3.14 执行静态检查，安装并验证 ffmpeg/ffprobe，
+运行含集成测试的完整 pytest，也支持手动触发。
+本地 hook 检查当前工作区，部分暂存后的实际提交内容由 CI 另行验证；
+合并前强制检查需在 GitHub 仓库规则中将 `Checks and tests` 设为必需项。
+测试跳过仍是未验证项，不因 hook 或 CI 返回成功而改变。启用方法与边界见 README。
 
 ## 7. 当前实现（可更改）
 
