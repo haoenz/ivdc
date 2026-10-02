@@ -228,4 +228,5 @@ ffmpeg 成功却丢失媒体流时拒绝提交。
 终端诊断在新建 Rich handler 及 ivdc/后代已有的终端 StreamHandler、RichHandler 上过滤，
 返回独立 LogRecord 副本并清除异常缓存与栈信息，FileHandler 始终收到原文。
 匿名 CLI 期间停止向根 logger 传播以避免重复控制台泄露，退出时恢复传播、级别及临时过滤器。
-debug 模式仍允许文件 handler 接收完整调试记录。
+debug 模式仍允许文件 handler 接收完整调试记录。逃逸异常在处理日志关闭前保存原始堆栈，
+记录或关闭日志的附加错误不能遮蔽原异常。dry-run、下载与启动前失败不因此新增日志。

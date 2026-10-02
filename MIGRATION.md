@@ -79,6 +79,7 @@ Python 调用方从 `ivdc.optimization_plan` 导入 `OptimizeOptions`，从 `ivd
   下载默认无日志文件；dry-run 与启动前失败不为诊断新增写入，需要终端详情时关闭 mask。
   嵌入式调用使用匿名 CLI 时，ivdc 暂停向根 logger 传播日志，并临时过滤 ivdc 及其后代
   已有终端 handler；文件 handler 保留原文，退出后恢复日志设置与过滤器。
+  已开始运行的未知异常在文件日志关闭前记录堆栈，日志自身故障不遮蔽原异常。
 - 自定义 `--log` 现在在处理前检查路径冲突：不能占用当前输入、待恢复文件、manifest，
   或写入 `.ivdc/backups`、`.ivdc/segs`、`.ivdc/tmp`；`.ivdc/` 内仅允许写入 `logs/`。
   符号链接与硬链接同样校验，dry-run 也会对冲突返回退出码 2。

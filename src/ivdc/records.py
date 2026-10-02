@@ -41,11 +41,27 @@ class ResultRecorder:
         exc: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
-        if self.handler is not None:
-            self.logger.removeHandler(self.handler)
-            self.result_logger.removeHandler(self.handler)
-            self.handler.close()
-        self.logger.setLevel(self.old_level)
+        try:
+            if exc is not None and exc_type is not None:
+                try:
+                    # 在释放文件 handler 之前记录原异常；终端摘要仍由 CLI 决定。
+                    self.result_logger.error("运行异常退出", exc_info=(exc_type, exc, traceback))
+                except Exception as log_error:
+                    # 日志自身故障不能替换已经发生的业务异常。
+                    exc.add_note(f"原异常未能写入处理日志: {log_error}")
+        finally:
+            try:
+                if self.handler is not None:
+                    self.logger.removeHandler(self.handler)
+                    self.result_logger.removeHandler(self.handler)
+                    try:
+                        self.handler.close()
+                    except Exception as close_error:
+                        if exc is None:
+                            raise
+                        exc.add_note(f"关闭处理日志失败: {close_error}")
+            finally:
+                self.logger.setLevel(self.old_level)
 
     def record(self, record: FileRecord) -> None:
         self.manifest.record(record)

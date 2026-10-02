@@ -180,6 +180,7 @@ dry-run 和启动前失败也不额外创建日志，因此这些场景不会提
 CLI 匿名模式暂停 ivdc 日志向根 logger 传播，防止其它根控制台 handler 重复输出原文；
 同时过滤 ivdc 及其后代 logger 上已有的 StreamHandler / RichHandler，排除 FileHandler。
 直接挂在 ivdc logger 上的文件 handler 仍收到原始记录，退出时恢复日志设置和临时过滤器。
+运行中的未预期异常在关闭处理日志之前写入原始堆栈；日志写入失败不会遮蔽原异常。
 
 日志路径在启动媒体处理和任何文件修改前校验，包括 `--dry-run`。它不能与当前输入视频
 （含将被跳过的文件）、待恢复文件或 manifest 冲突，也不能占用恢复所需的目录。
