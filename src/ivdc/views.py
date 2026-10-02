@@ -53,8 +53,25 @@ def diagnostics(console: Console, debug: bool = False, *, mask: bool = False) ->
     previous_propagate = logger.propagate
     handler = RichHandler(console=console, show_time=False, show_path=False, markup=False)
     handler.setLevel(logging.DEBUG if debug and not mask else logging.WARNING)
+    filtered: set[logging.Handler] = set()
+    mask_filter = MaskedDiagnostics()
     if mask:
-        handler.addFilter(MaskedDiagnostics())
+        # getChildren() 跳过中间只有 PlaceHolder 的命名层级，需快照全部已注册后代。
+        descendants = [
+            item
+            for item in logger.manager.loggerDict.copy().values()
+            if isinstance(item, logging.Logger) and item.name.startswith("ivdc.")
+        ]
+        for current in (logger, *descendants):
+            for existing in current.handlers:
+                if isinstance(existing, (logging.StreamHandler, RichHandler)) and not isinstance(
+                    existing, logging.FileHandler
+                ):
+                    filtered.add(existing)
+        filtered.add(handler)
+        for terminal in filtered:
+            # 每个出口只拿到副本；宿主预装的终端 handler 也不能泄露原始记录。
+            terminal.addFilter(mask_filter)
         # 根 logger 的控制台 handler 不能绕过匿名展示；ivdc 的文件 handler 不受影响。
         logger.propagate = False
     logger.addHandler(handler)
@@ -62,6 +79,8 @@ def diagnostics(console: Console, debug: bool = False, *, mask: bool = False) ->
     try:
         yield
     finally:
+        for terminal in filtered:
+            terminal.removeFilter(mask_filter)
         logger.removeHandler(handler)
         handler.close()
         logger.setLevel(previous)

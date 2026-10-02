@@ -289,3 +289,41 @@ def test_recovery_failure_is_hidden_in_notices_and_summary_but_logged(
     assert DETAILS in log
     assert backup.read_bytes() == b"original"
     assert not (tmp_path / backup.name).exists()
+
+
+@pytest.mark.parametrize("name", ["ivdc", "ivdc.ytdlp", "ivdc.external.nested"])
+@pytest.mark.parametrize("debug", [False, True])
+def test_existing_terminal_handlers_are_masked_and_restored(tmp_path, console_pair, name, debug):
+    logger = logging.getLogger(name)
+    original_state = logger.level, logger.propagate, tuple(logger.handlers)
+    extra_output = StringIO()
+    extra = logging.StreamHandler(extra_output)
+    file = logging.FileHandler(tmp_path / "raw.log", encoding="utf-8")
+    original_filter = logging.Filter()
+    extra.addFilter(original_filter)
+    logger.addHandler(extra)
+    logger.addHandler(file)
+    try:
+        with pytest.raises(RuntimeError, match="leave scope"):
+            with diagnostics(console_pair[0], debug, mask=True):
+                try:
+                    raise ValueError(DETAILS)
+                except ValueError:
+                    logger.exception("%s", DETAILS, stack_info=True)
+                raise RuntimeError("leave scope")
+        assert SECRET not in extra_output.getvalue()
+        assert "已隐藏" in extra_output.getvalue()
+        assert SECRET not in console_pair[1].getvalue()
+        assert "Traceback" not in extra_output.getvalue()
+        assert "Stack" not in extra_output.getvalue()
+        assert DETAILS in (tmp_path / "raw.log").read_text()
+        assert "Traceback" in (tmp_path / "raw.log").read_text()
+        assert extra.filters == [original_filter]
+        logger.warning("after scope: %s", DETAILS)
+        assert DETAILS in extra_output.getvalue()
+    finally:
+        logger.removeHandler(extra)
+        logger.removeHandler(file)
+        extra.close()
+        file.close()
+    assert (logger.level, logger.propagate, tuple(logger.handlers)) == original_state

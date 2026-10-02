@@ -178,7 +178,8 @@ manifest 缺失可以从空记录开始；格式损坏、未知版本或读取�
 压制的单项失败和恢复失败在实际处理日志中保留原始原因。下载默认不创建日志文件，
 dry-run 和启动前失败也不额外创建日志，因此这些场景不会提示“详见处理日志”。
 CLI 匿名模式暂停 ivdc 日志向根 logger 传播，防止其它根控制台 handler 重复输出原文；
-直接挂在 ivdc logger 上的文件 handler 仍收到原始记录，退出时恢复日志设置。
+同时过滤 ivdc 及其后代 logger 上已有的 StreamHandler / RichHandler，排除 FileHandler。
+直接挂在 ivdc logger 上的文件 handler 仍收到原始记录，退出时恢复日志设置和临时过滤器。
 
 日志路径在启动媒体处理和任何文件修改前校验，包括 `--dry-run`。它不能与当前输入视频
 （含将被跳过的文件）、待恢复文件或 manifest 冲突，也不能占用恢复所需的目录。

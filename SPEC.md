@@ -225,6 +225,7 @@ ffmpeg 成功却丢失媒体流时拒绝提交。
 软件使用 CRF，NVENC 使用 VBR 下的 CQ 并取消平均码率目标。质量配置解析为不可变映射，
 单轮只读取一次；实际参数进入既有 resume.json 的 encoder_args，无需另立档位身份协议。
 
-终端诊断在 Rich handler 上过滤，返回独立 LogRecord 副本并清除异常缓存与栈信息，原始记录
-供 ivdc 文件 handler 使用。匿名 CLI 期间停止向根 logger 传播以避免重复控制台泄露，
-退出时恢复传播及日志级别；debug 模式仍允许文件 handler 接收完整调试记录。
+终端诊断在新建 Rich handler 及 ivdc/后代已有的终端 StreamHandler、RichHandler 上过滤，
+返回独立 LogRecord 副本并清除异常缓存与栈信息，FileHandler 始终收到原文。
+匿名 CLI 期间停止向根 logger 传播以避免重复控制台泄露，退出时恢复传播、级别及临时过滤器。
+debug 模式仍允许文件 handler 接收完整调试记录。
