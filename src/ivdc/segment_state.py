@@ -89,6 +89,7 @@ def prepare_segments(layout: IvdcLayout, config: EncodingConfig, task: VideoTask
         "hwaccel_args": list(config.hwaccel_args),
         "stream_policy": "video_segments_original_tracks_v2",
         "video_offset": task.media.video_offset if task.media else 0.0,
+        "display_policy": "autorotate_pixels_v1",
     }
     # 缺少身份不是旧版身份：仅明确匹配的历史元数据允许升级复用。
     legacy = False

@@ -69,9 +69,11 @@ def validate_media(
     if (
         reference.width <= 0
         or reference.height <= 0
-        or (info.width, info.height) != (reference.width, reference.height)
+        or (info.width, info.height) != reference.display_size
     ):
         raise MediaError(f"视频尺寸无法确认或不符: {path}")
+    if not math.isclose(info.rotation % 360, 0, abs_tol=1e-4):
+        raise MediaError(f"视频已经旋转像素，输出不能再次应用旋转矩阵: {path}")
     if reference.frame_rate <= 0 or reference.time_base <= 0 or info.video_duration <= 0:
         raise MediaError(f"缺少可靠的视频时长、帧率或时间基准，不能确认完整性: {path}")
     # 不能用容器时长（可能被音频填满）代替视频时长。

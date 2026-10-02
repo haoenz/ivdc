@@ -42,11 +42,19 @@ class MediaInfo:
     streams: tuple[MediaStream, ...] = ()
     start_time: float = 0.0
     video_start_time: float = 0.0
+    rotation: float = 0.0
 
     @property
     def video_offset(self) -> float:
         """视频相对输入容器零点的偏移；seek 和拼接必须使用同一基准。"""
         return self.video_start_time - self.start_time
+
+    @property
+    def display_size(self) -> tuple[int, int]:
+        """ffmpeg autorotate 后的尺寸；直角旋转交换宽高，其它角度沿用画布。"""
+        if math.isclose(self.rotation % 180, 90, abs_tol=1e-4):
+            return self.height, self.width
+        return self.width, self.height
 
 
 def _timestamp(value: object) -> float:
@@ -126,6 +134,19 @@ def parse_media_info(payload: dict[str, object]) -> MediaInfo:
     for stream in streams:
         if stream.get("codec_type") == "video":
             width, height = stream.get("width"), stream.get("height")
+            side_data = stream.get("side_data_list")
+            rotation = (
+                next(
+                    (
+                        _timestamp(item.get("rotation"))
+                        for item in side_data
+                        if isinstance(item, dict) and item.get("side_data_type") == "Display Matrix"
+                    ),
+                    0.0,
+                )
+                if isinstance(side_data, list)
+                else 0.0
+            )
             return MediaInfo(
                 duration=duration,
                 codec_name=str(stream.get("codec_name") or "").strip(),
@@ -142,5 +163,6 @@ def parse_media_info(payload: dict[str, object]) -> MediaInfo:
                 if isinstance(format_info, dict)
                 else 0.0,
                 video_start_time=_timestamp(stream.get("start_time")),
+                rotation=rotation,
             )
     return MediaInfo(duration=duration, codec_name="", stream_types=kinds, streams=tuple(details))
