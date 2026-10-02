@@ -8,13 +8,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ivdc.errors import SetupError
 from ivdc.probe import has_cuda_hwaccel, has_encoder
 
 __all__ = [
     "CODECS",
     "CUDA_MODES",
     "CodecSpec",
-    "EncodeConfig",
+    "EncodingConfig",
     "build_ffmpeg_args",
     "resolve_encode_config",
 ]
@@ -72,7 +73,7 @@ CUDA_MODES = ("off", "decode", "encode")
 
 
 @dataclass(frozen=True)
-class EncodeConfig:
+class EncodingConfig:
     """一次压制任务最终采用的编码器与硬件加速配置。
 
     回退警告与模式提示以 ``notices`` 数据返回，由调用方负责展示：这里不碰 I/O，
@@ -86,7 +87,6 @@ class EncodeConfig:
     use_nvenc: bool = False
     has_cuda: bool = False
     crf: int = 0
-    error: str | None = None
     notices: tuple[str, ...] = ()
 
 
@@ -98,31 +98,27 @@ def resolve_encode_config(
     hwaccels_output: str,
     gpu_available: bool,
     crf: int | None = None,
-) -> EncodeConfig:
+) -> EncodingConfig:
     """结合 ffmpeg 能力与显卡情况，决定最终用哪个编码器、要不要开硬件加速。
 
-    ``gpu_available`` 由调用方实际探测（nvidia-smi 或 nvcuda.dll）后传入——ffmpeg 编译
+    ``gpu_available`` 由调用方实际探测（nvidia-smi）后传入——ffmpeg 编译
     带 CUDA 并不代表机器上真有 N 卡，用编译信息代替实探测会引入假阳性。
     """
+    if codec not in CODECS:
+        raise SetupError(f"未知编码器: {codec}")
     spec = CODECS[codec]
     chosen_crf = spec.default_crf if crf is None else crf
 
     if cuda not in CUDA_MODES:
-        raise ValueError(f"未知的 CUDA 模式: {cuda}")
+        raise SetupError(f"未知的 CUDA 模式: {cuda}")
 
     # 软件编码器必须可用，它始终是回退路径
     if not has_encoder(encoders_output, spec.sw_encoder):
-        return EncodeConfig(
-            codec=spec.key,
-            codec_name=spec.codec_name,
-            error=f"ffmpeg 未包含编码器 '{spec.sw_encoder}'（编译时未启用），无法压制为 {spec.key}。",
-        )
+        raise SetupError(f"ffmpeg 未包含编码器 '{spec.sw_encoder}'，无法压制为 {spec.key}。")
 
     notices: list[str] = []
 
-    has_cuda = (
-        cuda != "off" and gpu_available and has_cuda_hwaccel(hwaccels_output)
-    )
+    has_cuda = cuda != "off" and gpu_available and has_cuda_hwaccel(hwaccels_output)
 
     use_nvenc = False
     if cuda == "encode" and has_cuda:
@@ -134,6 +130,7 @@ def resolve_encode_config(
             use_nvenc = True
 
     template = spec.nvenc_args if use_nvenc else spec.sw_args
+    assert template is not None
     encoder_args = tuple(arg.format(crf=chosen_crf) for arg in template)
 
     hwaccel_args: tuple[str, ...] = ()
@@ -150,7 +147,7 @@ def resolve_encode_config(
     else:
         notices.append(f"未检测到 CUDA 支持，--cuda {cuda} 未生效，使用纯 CPU 模式工作。")
 
-    return EncodeConfig(
+    return EncodingConfig(
         codec=spec.key,
         codec_name=spec.codec_name,
         encoder_args=encoder_args,
@@ -170,7 +167,7 @@ def _number(value: float) -> str:
 
 
 def build_ffmpeg_args(
-    config: EncodeConfig,
+    config: EncodingConfig,
     source: str,
     target: str,
     *,

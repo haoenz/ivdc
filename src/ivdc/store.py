@@ -1,6 +1,6 @@
 """磁盘读写：原子写、清单、日志。
 
-所有写操作都是「先写 ``<name>.tmp`` 再 ``os.replace``」——Windows 上同样是原子替换，
+覆盖操作采用「写同目录唯一临时文件再 ``os.replace``」——Windows 上同样是原子替换，
 中途崩溃不会留下被截断的原文件。这套流程收敛在 :func:`atomic_write_text` 一处。
 
 删除类操作（:func:`clear_tmp` / :func:`remove_tree`）**不吞异常**：失败时返回计数或
@@ -10,24 +10,25 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
-from contextlib import suppress
+import tempfile
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
+from itertools import chain
 from pathlib import Path
-from typing import Sequence
 
+from ivdc.errors import SetupError, StorageError
 from ivdc.fs import IvdcLayout, Manifest
 
 TEXT_ENCODING = "utf-8"
 READ_ENCODING = "utf-8-sig"
-TMP_SUFFIX = ".tmp"
 
 __all__ = [
     "READ_ENCODING",
     "TEXT_ENCODING",
-    "TMP_SUFFIX",
     "TmpClear",
     "atomic_write_text",
     "append_line",
@@ -59,29 +60,29 @@ def now_iso() -> str:
 def atomic_write_text(path: Path, text: str) -> None:
     """原子地把文本写入 ``path``（同目录临时文件 + ``os.replace``）。"""
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(path.name + TMP_SUFFIX)
+    descriptor, name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    tmp_path = Path(name)
     try:
-        with open(tmp_path, "w", encoding=TEXT_ENCODING, newline="\n") as handle:
+        with os.fdopen(descriptor, "w", encoding=TEXT_ENCODING, newline="\n") as handle:
             handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(tmp_path, path)
     except BaseException:
-        with suppress(OSError):
-            tmp_path.unlink()
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError as exc:
+            logging.getLogger(__name__).warning("未能清理原子写临时文件 %s: %s", tmp_path, exc)
         raise
 
 
 def read_lines(path: Path) -> list[str]:
-    """读取文本行；文件缺失或读不到时返回空列表（调用方按「没有内容」处理）。
+    """读取文本行；读取错误向调用方传播。
 
     ``READ_ENCODING`` 用 ``utf-8-sig``：清单可能被其它编辑器或工具改过，写出的 UTF-8
     常带 BOM，按普通 utf-8 读会在首行留下一个 U+FEFF。
     """
-    try:
-        return path.read_text(encoding=READ_ENCODING).splitlines()
-    except OSError:
-        return []
+    return path.read_text(encoding=READ_ENCODING).splitlines()
 
 
 def read_nonempty_lines(path: Path) -> list[str]:
@@ -100,17 +101,22 @@ def append_line(path: Path, line: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "a", encoding=TEXT_ENCODING, newline="\n") as handle:
         handle.write(f"{line}\n")
+        handle.flush()
+        os.fsync(handle.fileno())
 
 
 def load_manifest(layout: IvdcLayout) -> Manifest:
-    """读取处理清单；文件缺失或损坏时返回空清单。"""
+    """读取处理清单；仅文件缺失时返回空清单，损坏或读取失败时抛 StorageError。"""
     try:
-        payload = json.loads(layout.manifest_path.read_text(encoding=READ_ENCODING))
-    except (OSError, json.JSONDecodeError, ValueError):
+        text = layout.manifest_path.read_text(encoding=READ_ENCODING)
+    except FileNotFoundError:
         return Manifest()
-    if not isinstance(payload, dict):
-        return Manifest()
-    return Manifest.from_dict(payload)
+    except (OSError, UnicodeError) as exc:
+        raise StorageError(f"无法读取 manifest {layout.manifest_path}: {exc}") from exc
+    try:
+        return Manifest.from_dict(json.loads(text))
+    except (ValueError, TypeError) as exc:
+        raise StorageError(f"manifest 无效 {layout.manifest_path}: {exc}") from exc
 
 
 def save_manifest(layout: IvdcLayout, manifest: Manifest) -> None:
@@ -119,7 +125,9 @@ def save_manifest(layout: IvdcLayout, manifest: Manifest) -> None:
     atomic_write_text(layout.manifest_path, f"{text}\n")
 
 
-def resolve_log_path(layout: IvdcLayout, requested: Path | None, *, day: date | None = None) -> Path:
+def resolve_log_path(
+    layout: IvdcLayout, requested: Path | None, *, day: date | None = None
+) -> Path:
     """日志路径：默认 ``.ivdc/logs/YYYY-MM-DD.log``，用户指定时相对当前目录解析。"""
     if requested is None:
         return layout.log(day or date.today())
@@ -142,7 +150,8 @@ def clear_tmp(layout: IvdcLayout) -> TmpClear:
             continue
         try:
             entry.unlink()
-        except OSError:
+        except OSError as exc:
+            logging.getLogger(__name__).warning("无法删除 %s: %s", entry, exc)
             failed += 1
         else:
             removed += 1
@@ -159,7 +168,8 @@ def remove_tree(path: Path) -> bool:
         shutil.rmtree(path)
     except FileNotFoundError:
         return True
-    except OSError:
+    except OSError as exc:
+        logging.getLogger(__name__).warning("无法删除目录 %s: %s", path, exc)
         return False
     return True
 
@@ -169,14 +179,19 @@ def dir_stats(path: Path) -> tuple[int, int]:
     if not path.exists():
         return 0, 0
     if path.is_file():
-        with suppress(OSError):
-            return 1, path.stat().st_size
-        return 0, 0
+        return 1, path.stat().st_size
     count = 0
     total = 0
     for entry in path.rglob("*"):
         if entry.is_file():
-            with suppress(OSError):
-                total += entry.stat().st_size
-                count += 1
+            total += entry.stat().st_size
+            count += 1
     return count, total
+
+
+def validate_state_directory(layout: IvdcLayout) -> None:
+    """状态目录中的链接不能将恢复、编码或清理引向外部文件。"""
+    paths = chain((layout.state_dir,), layout.state_dir.rglob("*"))
+    for path in paths:
+        if path.is_symlink():
+            raise SetupError(f"状态路径不能是符号链接: {path}")

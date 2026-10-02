@@ -17,7 +17,7 @@ from ivdc.fs import (
     FileRecord,
     IvdcLayout,
     Manifest,
-    build_concat_list,
+    concat_lines,
     seg_filename,
 )
 
@@ -63,10 +63,8 @@ def test_seg_filename(index: int, expected: str) -> None:
     assert seg_filename(index) == expected
 
 
-def test_build_concat_list(layout: IvdcLayout) -> None:
-    assert build_concat_list(3) == (
-        "file 'seg_000.mp4'\nfile 'seg_001.mp4'\nfile 'seg_002.mp4'"
-    )
+def test_concat_lines(layout: IvdcLayout) -> None:
+    assert concat_lines(3) == ["file 'seg_000.mp4'", "file 'seg_001.mp4'", "file 'seg_002.mp4'"]
     assert CONCAT_LIST_NAME == "concat_list.txt"
 
 
@@ -105,4 +103,5 @@ def test_manifest_failed_record_is_not_done() -> None:
 def test_manifest_handles_empty_and_partial_payloads() -> None:
     assert Manifest.from_dict({}).entries == {}
     assert Manifest.from_dict({"entries": {}}).is_done("x.mp4") is False
-    assert Manifest.from_dict({"entries": {"x.mp4": {}}}).get("x.mp4").status == ""
+    with pytest.raises(ValueError):
+        Manifest.from_dict({"entries": {"x.mp4": {}}})

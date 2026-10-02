@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -35,7 +36,6 @@ __all__ = [
     "FileRecord",
     "IvdcLayout",
     "Manifest",
-    "build_concat_list",
     "concat_lines",
     "seg_filename",
 ]
@@ -52,11 +52,6 @@ def seg_filename(index: int) -> str:
 def concat_lines(count: int) -> list[str]:
     """拼接清单的每一行（相对分片目录）。"""
     return [f"file '{seg_filename(index)}'" for index in range(count)]
-
-
-def build_concat_list(count: int) -> str:
-    """拼接清单的完整文本（写入 ``concat_list.txt`` 的形态）。"""
-    return "\n".join(concat_lines(count))
 
 
 @dataclass(frozen=True)
@@ -136,16 +131,36 @@ class FileRecord:
         }
 
     @classmethod
-    def from_dict(cls, payload: dict) -> FileRecord:
+    def from_dict(cls, payload: object) -> FileRecord:
+        if not isinstance(payload, dict):
+            raise ValueError("记录必须是对象")
+        name = payload.get("name")
+        status = payload.get("status")
+        if (
+            not isinstance(name, str)
+            or not name
+            or Path(name).is_absolute()
+            or ".." in Path(name).parts
+        ):
+            raise ValueError("记录名称必须是安全的相对路径")
+        if status not in (STATUS_OK, STATUS_FAILED):
+            raise ValueError(f"记录状态无效: {status!r}")
+        values = {key: payload.get(key, "") for key in ("codec", "finished_at", "message")}
+        if any(not isinstance(value, str) for value in values.values()):
+            raise ValueError("记录文本字段必须是字符串")
+        old_bytes, new_bytes = payload.get("old_bytes", 0), payload.get("new_bytes", 0)
+        if any(type(value) is not int or value < 0 for value in (old_bytes, new_bytes)):
+            raise ValueError("记录大小必须是非负整数")
+        seconds = payload.get("seconds", 0.0)
+        if type(seconds) not in (int, float) or not math.isfinite(seconds) or seconds < 0:
+            raise ValueError("记录耗时必须是有限非负数")
         return cls(
-            name=str(payload.get("name", "")),
-            status=str(payload.get("status", "")),
-            codec=str(payload.get("codec", "")),
-            old_bytes=int(payload.get("old_bytes", 0)),
-            new_bytes=int(payload.get("new_bytes", 0)),
-            seconds=float(payload.get("seconds", 0.0)),
-            finished_at=str(payload.get("finished_at", "")),
-            message=str(payload.get("message", "")),
+            name=name,
+            status=status,
+            old_bytes=old_bytes,
+            new_bytes=new_bytes,
+            seconds=float(seconds),
+            **values,
         )
 
 
@@ -153,8 +168,7 @@ class FileRecord:
 class Manifest:
     """``manifest.json`` 的内存形态。
 
-    断点续压时靠它判断文件与分片的完成状态，比「看文件在不在」更可靠，
-    也顺便留下了体积与耗时的统计。
+    记录结果与体积耗时；可恢复分片另行探测校验。
     """
 
     entries: dict[str, FileRecord] = field(default_factory=dict)
@@ -176,9 +190,19 @@ class Manifest:
         }
 
     @classmethod
-    def from_dict(cls, payload: dict) -> Manifest:
+    def from_dict(cls, payload: object) -> Manifest:
+        if not isinstance(payload, dict):
+            raise ValueError("manifest 必须是对象")
+        version = payload.get("version", MANIFEST_VERSION)
+        if type(version) is not int or version != MANIFEST_VERSION:
+            raise ValueError("不支持的 manifest 版本")
+        raw_entries = payload.get("entries", {})
+        if not isinstance(raw_entries, dict):
+            raise ValueError("entries 必须是对象")
         entries: dict[str, FileRecord] = {}
-        raw_entries = payload.get("entries") or {}
-        for name, record in raw_entries.items():
-            entries[str(name)] = FileRecord.from_dict(record)
+        for name, raw_record in raw_entries.items():
+            record = FileRecord.from_dict(raw_record)
+            if name != record.name:
+                raise ValueError(f"记录键与名称不一致: {name!r}")
+            entries[name] = record
         return cls(entries=entries)

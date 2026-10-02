@@ -1,4 +1,4 @@
-"""``ivdc clean``：类别选择、--what-if、以及「备份是唯一一份」时的保护。"""
+"""``ivdc clean``：类别选择、--dry-run、以及「备份是唯一一份」时的保护。"""
 
 from __future__ import annotations
 
@@ -7,7 +7,8 @@ from pathlib import Path
 
 from rich.console import Console
 
-from ivdc.cleanup import CleanOptions, run_clean
+from ivdc.cleanup import CleanOptions
+from ivdc.cli import execute_clean
 from ivdc.exitcodes import EXIT_ENV, EXIT_FAILURE, EXIT_OK
 from ivdc.fs import IvdcLayout
 
@@ -34,7 +35,7 @@ def test_without_kinds_is_an_env_error(
     console_pair: tuple[Console, StringIO], tmp_path: Path
 ) -> None:
     console, _ = console_pair
-    assert run_clean(CleanOptions(path=tmp_path), console) == EXIT_ENV
+    assert execute_clean(CleanOptions(path=tmp_path), console) == EXIT_ENV
 
 
 def test_missing_directory_is_an_env_error(
@@ -42,7 +43,7 @@ def test_missing_directory_is_an_env_error(
 ) -> None:
     console, _ = console_pair
     options = CleanOptions(path=tmp_path / "nope", kinds=("tmp",))
-    assert run_clean(options, console) == EXIT_ENV
+    assert execute_clean(options, console) == EXIT_ENV
 
 
 def test_removes_only_the_selected_kinds(
@@ -52,7 +53,7 @@ def test_removes_only_the_selected_kinds(
     _populate(layout)
     console, _ = console_pair
 
-    code = run_clean(CleanOptions(path=layout.root, kinds=("tmp", "logs")), console)
+    code = execute_clean(CleanOptions(path=layout.root, kinds=("tmp", "logs")), console)
 
     assert code == EXIT_OK
     assert list(layout.tmp_dir.iterdir()) == []
@@ -68,7 +69,7 @@ def test_all_clears_every_selected_directory(
     _populate(layout)
     console, stream = console_pair
 
-    code = run_clean(
+    code = execute_clean(
         CleanOptions(path=layout.root, kinds=("backups", "segs", "tmp", "logs")), console
     )
 
@@ -78,15 +79,15 @@ def test_all_clears_every_selected_directory(
     assert "共释放" in stream.getvalue()
 
 
-def test_what_if_lists_but_deletes_nothing(
+def test_dry_run_lists_but_deletes_nothing(
     console_pair: tuple[Console, StringIO], tmp_path: Path
 ) -> None:
     layout = _layout(tmp_path)
     _populate(layout)
     console, stream = console_pair
 
-    code = run_clean(
-        CleanOptions(path=layout.root, kinds=("backups", "segs", "tmp", "logs"), what_if=True),
+    code = execute_clean(
+        CleanOptions(path=layout.root, kinds=("backups", "segs", "tmp", "logs"), dry_run=True),
         console,
     )
 
@@ -106,7 +107,7 @@ def test_backup_of_a_missing_source_is_protected(
     (layout.backups_dir / "orphan.mp4").write_text("only copy", encoding="utf-8")
     console, stream = console_pair
 
-    code = run_clean(CleanOptions(path=layout.root, kinds=("backups",)), console)
+    code = execute_clean(CleanOptions(path=layout.root, kinds=("backups",)), console)
 
     assert code == EXIT_OK
     assert (layout.backups_dir / "orphan.mp4").exists()
@@ -119,7 +120,7 @@ def test_empty_state_directory_reports_nothing_to_do(
     layout = _layout(tmp_path)
     console, stream = console_pair
 
-    assert run_clean(CleanOptions(path=layout.root, kinds=("tmp",)), console) == EXIT_OK
+    assert execute_clean(CleanOptions(path=layout.root, kinds=("tmp",)), console) == EXIT_OK
     assert "没有需要清理的内容" in stream.getvalue()
 
 
@@ -132,9 +133,7 @@ def test_files_outside_the_state_directory_are_never_touched(
     stray.write_text("keep", encoding="utf-8")
     console, _ = console_pair
 
-    run_clean(
-        CleanOptions(path=layout.root, kinds=("backups", "segs", "tmp", "logs")), console
-    )
+    execute_clean(CleanOptions(path=layout.root, kinds=("backups", "segs", "tmp", "logs")), console)
 
     assert stray.exists()
     assert (layout.root / "a.mp4").exists()
@@ -149,7 +148,7 @@ def test_undeletable_units_are_reported_and_fail_the_run(
     console, stream = console_pair
     monkeypatch.setattr("ivdc.cleanup.remove_tree", lambda path: False)
 
-    code = run_clean(CleanOptions(path=layout.root, kinds=("segs", "tmp")), console)
+    code = execute_clean(CleanOptions(path=layout.root, kinds=("segs", "tmp")), console)
 
     assert code == EXIT_FAILURE
     output = stream.getvalue()
@@ -158,3 +157,15 @@ def test_undeletable_units_are_reported_and_fail_the_run(
     assert "已清理 [tmp] 1 项" in output
     assert layout.seg_dir("b.mp4").is_dir()
     assert not (layout.tmp_dir / "b.mp4").exists()
+
+
+def test_state_symlink_cannot_delete_outside_files(console_pair, tmp_path):
+    layout = _layout(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "valuable").write_bytes(b"keep")
+    layout.state_dir.mkdir()
+    layout.tmp_dir.symlink_to(outside, target_is_directory=True)
+    console, _ = console_pair
+    assert execute_clean(CleanOptions(layout.root, ("tmp",)), console) == EXIT_ENV
+    assert (outside / "valuable").read_bytes() == b"keep"

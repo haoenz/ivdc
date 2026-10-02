@@ -1,172 +1,178 @@
-"""子进程调用的统一封装（这是唯一执行外部命令的地方）。
+"""一次运行拥有的子进程资源；探测、编码和拼接使用同一生命周期。"""
 
-两种用法：
-
-- ``capture_command``：短命令取输出（探测 ffmpeg 能力、ffprobe 取元数据）。
-- ``stream_command``：逐行回调（ffmpeg 的 ``-progress`` 流）。
-
-两者都在 ``KeyboardInterrupt`` 时终止子进程再向上抛，避免留下还在跑的 ffmpeg。
-"""
-
-from __future__ import annotations
-
+import logging
 import subprocess
 import threading
 from collections import deque
-from dataclasses import dataclass, field
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Mapping, Sequence
+from typing import Self
 
-__all__ = [
-    "CommandResult",
-    "active_count",
-    "capture_command",
-    "stream_command",
-    "terminate_all",
-]
+logger = logging.getLogger(__name__)
 
-_ENCODING = "utf-8"
-_INTERRUPT_GRACE_SECONDS = 5.0
 
-# 正在运行的外部命令。Ctrl+C 时主线程调 terminate_all() 把它们全部杀掉，
-# 否则工作线程会一直卡在读管道上，线程池的 shutdown(wait=True) 就得干等。
-_ACTIVE: set[subprocess.Popen[str]] = set()
-_ACTIVE_LOCK = threading.Lock()
+class CommandError(RuntimeError):
+    """命令启动或等待失败，包含命令与原始异常上下文。"""
+
+
+class RunCancelled(RuntimeError):
+    """运行已取消，不再启动新命令。"""
 
 
 @dataclass(frozen=True)
 class CommandResult:
-    """一次外部命令的结果。
-
-    ``stdout`` / ``stderr`` 只在 ``capture_command`` 下有值；``lines`` 只在
-    ``stream_command`` 下有值（含合并进来的 stderr 行）。
-    """
-
     argv: tuple[str, ...]
     returncode: int
     stdout: str = ""
     stderr: str = ""
-    lines: tuple[str, ...] = field(default_factory=tuple)
+    lines: tuple[str, ...] = ()
 
     @property
     def ok(self) -> bool:
         return self.returncode == 0
 
 
-def _terminate(process: subprocess.Popen[str]) -> None:
-    if process.poll() is not None:
-        return
-    process.terminate()
-    try:
-        process.wait(timeout=_INTERRUPT_GRACE_SECONDS)
-    except subprocess.TimeoutExpired:
-        process.kill()
+class ProcessRunner:
+    def __init__(self) -> None:
+        self._processes: set[subprocess.Popen[str]] = set()
+        self._lock = threading.Lock()
+        self._cancelled = threading.Event()
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.cancel()
+
+    @property
+    def active_count(self) -> int:
+        with self._lock:
+            return len(self._processes)
+
+    def check_cancelled(self) -> None:
+        if self._cancelled.is_set():
+            raise RunCancelled("运行已取消")
+
+    @staticmethod
+    def _terminate(process: subprocess.Popen[str]) -> None:
+        if process.poll() is not None:
+            return
         try:
-            process.wait(timeout=_INTERRUPT_GRACE_SECONDS)
-        except subprocess.TimeoutExpired:  # pragma: no cover - 极端情况
+            process.terminate()
+        except ProcessLookupError:
             pass
+        try:
+            process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
+            process.wait()
+
+    def cancel(self) -> int:
+        with self._lock:
+            self._cancelled.set()
+            processes = tuple(self._processes)
+        # 先向所有进程发信号，避免逐个等待让其它编码继续运行。
+        for process in processes:
+            if process.poll() is None:
+                try:
+                    process.terminate()
+                except ProcessLookupError:
+                    pass
+        for process in processes:
+            self._terminate(process)
+        return len(processes)
+
+    @contextmanager
+    def _process(
+        self,
+        argv: Sequence[str | Path],
+        *,
+        merged: bool = False,
+        cwd: str | Path | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> Iterator[subprocess.Popen[str]]:
+        command = tuple(str(item) for item in argv)
+        logger.debug("执行: %s", " ".join(command))
+        with self._lock:
+            self.check_cancelled()
+            try:
+                process = subprocess.Popen(
+                    command,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT if merged else subprocess.PIPE,
+                    stdin=subprocess.DEVNULL,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    cwd=cwd,
+                    env=env,
+                )
+            except OSError as exc:
+                raise CommandError(f"无法启动 {command!r}: {exc}") from exc
+            self._processes.add(process)
+        try:
+            yield process
+        finally:
+            self._terminate(process)
+            for pipe in (process.stdout, process.stderr):
+                if pipe is not None:
+                    pipe.close()
+            with self._lock:
+                self._processes.discard(process)
+
+    def capture(
+        self,
+        argv: Sequence[str | Path],
+        *,
+        timeout: float | None = None,
+        cwd: str | Path | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> CommandResult:
+        with self._process(argv, cwd=cwd, env=env) as process:
+            try:
+                stdout, stderr = process.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired as exc:
+                raise CommandError(f"命令超时 ({timeout}s): {tuple(map(str, argv))!r}") from exc
+            self.check_cancelled()
+            return CommandResult(tuple(map(str, argv)), process.returncode, stdout, stderr)
+
+    def stream(
+        self,
+        argv: Sequence[str | Path],
+        *,
+        on_output: Callable[[str], None] | None = None,
+        keep_last: int = 40,
+        cwd: str | Path | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> CommandResult:
+        lines: list[str] | deque[str] = [] if on_output is None else deque(maxlen=max(1, keep_last))
+        with self._process(argv, merged=True, cwd=cwd, env=env) as process:
+            assert process.stdout is not None
+            for raw in process.stdout:
+                line = raw.rstrip("\r\n")
+                lines.append(line)
+                if on_output is not None:
+                    on_output(line)
+            process.wait()
+            self.check_cancelled()
+            return CommandResult(tuple(map(str, argv)), process.returncode, lines=tuple(lines))
 
 
-def terminate_all() -> int:
-    """终止所有正在运行的外部命令，返回终止的进程数。
-
-    Ctrl+C 之后调用：工作线程卡在管道读取上不会收到 KeyboardInterrupt，
-    必须由主线程主动把子进程杀掉，它们才会退出、线程池才会收拢。
-    """
-    with _ACTIVE_LOCK:
-        processes = list(_ACTIVE)
-    for process in processes:
-        _terminate(process)
-    return len(processes)
-
-
-def active_count() -> int:
-    """当前在跑的外部命令数量。生产代码不读它，是给测试与排障用的观测接缝。"""
-    with _ACTIVE_LOCK:
-        return len(_ACTIVE)
-
-
-def capture_command(
-    argv: Sequence[str | Path],
-    *,
-    timeout: float | None = None,
-    cwd: str | Path | None = None,
-    env: Mapping[str, str] | None = None,
-) -> CommandResult:
-    """执行命令并一次性取回输出（不抛异常，失败体现为 returncode）。"""
-    command = [str(item) for item in argv]
+@contextmanager
+def worker_pool(runner: ProcessRunner, workers: int) -> Iterator[ThreadPoolExecutor]:
+    """异常时先取消子进程和待执行任务，再等待线程退出。"""
+    pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="ivdc-worker")
     try:
-        completed = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            encoding=_ENCODING,
-            errors="replace",
-            timeout=timeout,
-            cwd=str(cwd) if cwd is not None else None,
-            env=dict(env) if env is not None else None,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        return CommandResult(tuple(command), returncode=-1, stderr=str(exc))
-    return CommandResult(
-        argv=tuple(command),
-        returncode=completed.returncode,
-        stdout=completed.stdout or "",
-        stderr=completed.stderr or "",
-    )
-
-
-def stream_command(
-    argv: Sequence[str | Path],
-    *,
-    on_output: Callable[[str], None] | None = None,
-    keep_last: int = 40,
-    cwd: str | Path | None = None,
-    env: Mapping[str, str] | None = None,
-) -> CommandResult:
-    """执行命令并逐行回调输出（stderr 合并进 stdout，报错文本与进度行按到达顺序处理）。
-
-    ``on_output`` 为 None 时把所有行收集进 ``CommandResult.lines``；给了回调时只保留
-    末尾 ``keep_last`` 行——长任务会产生上万行进度输出，但失败排查只关心最后几行。
-    """
-    command = [str(item) for item in argv]
-    collected: list[str] = []
-    recent_lines: deque[str] = deque(maxlen=max(1, keep_last))
-    process = subprocess.Popen(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        stdin=subprocess.DEVNULL,
-        text=True,
-        encoding=_ENCODING,
-        errors="replace",
-        bufsize=1,
-        cwd=str(cwd) if cwd is not None else None,
-        env=dict(env) if env is not None else None,
-    )
-    with _ACTIVE_LOCK:
-        _ACTIVE.add(process)
-    try:
-        assert process.stdout is not None  # noqa: S101 - Popen 已指定 PIPE
-        for raw in process.stdout:
-            line = raw.rstrip("\r\n")
-            recent_lines.append(line)
-            if on_output is None:
-                collected.append(line)
-            else:
-                on_output(line)
-    except KeyboardInterrupt:
-        _terminate(process)
+        yield pool
+    except BaseException:
+        pool.shutdown(wait=False, cancel_futures=True)
+        runner.cancel()
         raise
     finally:
-        with _ACTIVE_LOCK:
-            _ACTIVE.discard(process)
-        if process.poll() is None:
-            _terminate(process)
-            process.wait()
-    return CommandResult(
-        argv=tuple(command),
-        returncode=process.returncode if process.returncode is not None else -1,
-        lines=tuple(collected) if on_output is None else tuple(recent_lines),
-    )
+        pool.shutdown(wait=True, cancel_futures=True)

@@ -13,28 +13,19 @@ from functools import lru_cache
 from rich.console import Console
 
 STYLE_DONE = "green"
-STYLE_NOTICE = "green"
 STYLE_INFO = "cyan"
 STYLE_WARN = "yellow"
 STYLE_FAIL = "yellow"
 STYLE_SKIP = "grey62"
-STYLE_DEBUG = "yellow"
 STYLE_ERROR = "red"
-STYLE_DEBUG_LINE = "grey62"
 STYLE_PLAIN = ""
 
-DEBUG_PREFIX = "[DEBUG] "
-"""``--debug`` 下诊断行的统一前缀。"""
 
 __all__ = [
-    "DEBUG_PREFIX",
-    "STYLE_DEBUG",
-    "STYLE_DEBUG_LINE",
     "STYLE_DONE",
     "STYLE_ERROR",
     "STYLE_FAIL",
     "STYLE_INFO",
-    "STYLE_NOTICE",
     "STYLE_PLAIN",
     "STYLE_SKIP",
     "STYLE_WARN",

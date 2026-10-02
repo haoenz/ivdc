@@ -1,4 +1,4 @@
-"""百分比与日志行格式（SPEC.md §4 的输出契约，改动即改变既有日志）。"""
+"""百分比、终端摘要和日志格式。"""
 
 from __future__ import annotations
 
@@ -84,7 +84,14 @@ def test_format_media_size(num_bytes: int, expected: str) -> None:
 
 @pytest.mark.parametrize(
     ("seconds", "expected"),
-    [(0, "00:00"), (5, "00:05"), (65, "01:05"), (3599, "59:59"), (3600, "1:00:00"), (3723, "1:02:03")],
+    [
+        (0, "00:00"),
+        (5, "00:05"),
+        (65, "01:05"),
+        (3599, "59:59"),
+        (3600, "1:00:00"),
+        (3723, "1:02:03"),
+    ],
 )
 def test_format_clock(seconds: float, expected: str) -> None:
     assert format_clock(seconds) == expected
@@ -96,7 +103,10 @@ def test_format_clock_clamps_negative_values() -> None:
 
 def test_format_download_status_variants() -> None:
     total = 12 * 1024**2 + 512 * 1024
-    assert format_download_status(1024**2, total, 1024**2, 12) == "1.0MiB/12.5MiB at 1.0MiB/s ETA 00:12"
+    assert (
+        format_download_status(1024**2, total, 1024**2, 12)
+        == "1.0MiB/12.5MiB at 1.0MiB/s ETA 00:12"
+    )
     assert format_download_status(1024, 0) == "1.0KiB"
     assert format_download_status(0, total, None, None) == "0B/12.5MiB"
 

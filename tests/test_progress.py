@@ -136,3 +136,19 @@ def test_update_without_changes_is_a_noop() -> None:
     with ProgressDisplay(console, refresh_interval=5.0) as display:
         task_id = display.add_task("a.mp4")
         display.update(task_id)
+
+
+def test_progress_thread_exits_on_exception():
+    import threading
+
+    import pytest
+
+    console, _ = _terminal_console()
+    before = set(threading.enumerate())
+    with pytest.raises(RuntimeError), ProgressDisplay(console, refresh_interval=0.001):
+        raise RuntimeError("interrupted work")
+    assert not [
+        thread
+        for thread in threading.enumerate()
+        if thread not in before and thread.name == "ivdc-progress"
+    ]

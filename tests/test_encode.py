@@ -57,7 +57,6 @@ def resolve(codec: str, cuda: str, **overrides):
 
 def test_software_encoder_when_cuda_off() -> None:
     config = resolve("x265", "off")
-    assert config.error is None
     assert config.has_cuda is False
     assert config.use_nvenc is False
     assert config.encoder_args == ("-c:v", "libx265", "-tag:v", "hvc1", "-crf", "28")
@@ -97,10 +96,8 @@ def test_vp9_has_no_nvenc_variant() -> None:
 
 
 def test_missing_software_encoder_is_an_error() -> None:
-    config = resolve("x265", "decode", encoders_output=ENCODERS_NO_X265)
-    assert config.error is not None
-    assert "libx265" in config.error
-    assert config.encoder_args == ()
+    with pytest.raises(ValueError, match="libx265"):
+        resolve("x265", "decode", encoders_output=ENCODERS_NO_X265)
 
 
 def test_no_cuda_compiled_in_disables_hwaccel() -> None:
@@ -141,27 +138,49 @@ def test_build_ffmpeg_args_full_file() -> None:
     config = resolve("x265", "off")
     args = build_ffmpeg_args(config, "in.mp4", "out.mp4")
     assert args == [
-        "-v", "error",
-        "-progress", "-",
-        "-i", "in.mp4",
-        "-c:v", "libx265", "-tag:v", "hvc1", "-crf", "28",
-        "-f", "mp4", "out.mp4", "-y",
+        "-v",
+        "error",
+        "-progress",
+        "-",
+        "-i",
+        "in.mp4",
+        "-c:v",
+        "libx265",
+        "-tag:v",
+        "hvc1",
+        "-crf",
+        "28",
+        "-f",
+        "mp4",
+        "out.mp4",
+        "-y",
     ]
 
 
 def test_build_ffmpeg_args_segment_places_ss_before_input() -> None:
     config = resolve("x265", "off")
-    args = build_ffmpeg_args(
-        config, "in.mp4.original", "seg_000.mp4", start=60.0, duration=60.0
-    )
+    args = build_ffmpeg_args(config, "in.mp4.original", "seg_000.mp4", start=60.0, duration=60.0)
     assert args == [
-        "-v", "error",
-        "-progress", "-",
-        "-ss", "60",
-        "-i", "in.mp4.original",
-        "-t", "60",
-        "-c:v", "libx265", "-tag:v", "hvc1", "-crf", "28",
-        "-f", "mp4", "seg_000.mp4", "-y",
+        "-v",
+        "error",
+        "-progress",
+        "-",
+        "-ss",
+        "60",
+        "-i",
+        "in.mp4.original",
+        "-t",
+        "60",
+        "-c:v",
+        "libx265",
+        "-tag:v",
+        "hvc1",
+        "-crf",
+        "28",
+        "-f",
+        "mp4",
+        "seg_000.mp4",
+        "-y",
     ]
 
 
@@ -169,12 +188,18 @@ def test_build_ffmpeg_args_keeps_ss_before_hwaccel() -> None:
     config = resolve("x265", "encode")
     args = build_ffmpeg_args(config, "in.mp4", "out.mp4", start=90.0)
     assert args[:12] == [
-        "-v", "error",
-        "-progress", "-",
-        "-ss", "90",
-        "-hwaccel", "cuda",
-        "-hwaccel_output_format", "cuda",
-        "-i", "in.mp4",
+        "-v",
+        "error",
+        "-progress",
+        "-",
+        "-ss",
+        "90",
+        "-hwaccel",
+        "cuda",
+        "-hwaccel_output_format",
+        "cuda",
+        "-i",
+        "in.mp4",
     ]
 
 

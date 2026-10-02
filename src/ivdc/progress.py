@@ -9,9 +9,9 @@ OSC 序列写在同一个锁内，不会互相插队把画面撕开。
 
 from __future__ import annotations
 
+import logging
 import os
 import threading
-from contextlib import suppress
 from typing import IO
 
 from rich.console import Console
@@ -60,7 +60,7 @@ def _read_window_title() -> str | None:
         buffer = ctypes.create_unicode_buffer(1024)
         length = ctypes.windll.kernel32.GetConsoleTitleW(buffer, 1024)  # type: ignore[attr-defined]
         return buffer.value if length else ""
-    except Exception:  # pragma: no cover - 非控制台宿主
+    except AttributeError, OSError:  # pragma: no cover - 非控制台宿主
         return None
 
 
@@ -123,6 +123,7 @@ class ProgressDisplay:
     def start(self) -> ProgressDisplay:
         if self._started:
             return self
+        self._stop.clear()
         self._started = True
         if not self._enabled:
             return self
@@ -140,12 +141,12 @@ class ProgressDisplay:
         self._stop.set()
         thread, self._thread = self._thread, None
         if thread is not None:
-            thread.join(timeout=1.0)
+            thread.join()
         if self._enabled:
             with self._lock:
-                with suppress(Exception):
+                try:
                     self._progress.refresh()
-                with suppress(Exception):
+                finally:
                     self._progress.stop()
             self._push_taskbar(TASKBAR_CLEAR, 0)
             self._push_title(self._saved_title if self._saved_title is not None else "")
@@ -172,23 +173,15 @@ class ProgressDisplay:
         total: float | None = None,
         status: str | None = None,
     ) -> None:
-        fields: dict[str, object] = {}
-        if completed is not None:
-            fields["completed"] = completed
-        if total is not None:
-            fields["total"] = total
-        if status is not None:
-            fields["status"] = status
-        if not fields:
-            return
         with self._lock:
-            with suppress(Exception):
-                self._progress.update(task_id, **fields)
+            if status is None:
+                self._progress.update(task_id, completed=completed, total=total)
+            else:
+                self._progress.update(task_id, completed=completed, total=total, status=status)
 
     def remove_task(self, task_id: TaskID) -> None:
         with self._lock:
-            with suppress(Exception):
-                self._progress.remove_task(task_id)
+            self._progress.remove_task(task_id)
 
     def set_global(
         self, percent: int, *, completed: int | None = None, total: int | None = None
@@ -207,8 +200,8 @@ class ProgressDisplay:
             percent_value = self._percent
             completed_value = self._completed
             total_value = self._total
-        self._push_taskbar(TASKBAR_NORMAL, percent_value)
-        self._push_title(f"[ivdc]{self._title_prefix}({completed_value}/{total_value})")
+            self._push_taskbar(TASKBAR_NORMAL, percent_value)
+            self._push_title(f"[ivdc]{self._title_prefix}({completed_value}/{total_value})")
 
     # ---- 纯文本输出 -------------------------------------------------------
 
@@ -222,16 +215,19 @@ class ProgressDisplay:
     def _tick(self) -> None:
         while not self._stop.wait(self._refresh_interval):
             with self._lock:
-                with suppress(Exception):
+                try:
                     self._progress.refresh()
+                except (OSError, ValueError) as exc:
+                    logging.getLogger(__name__).warning("进度刷新停止: %s", exc)
+                    self._stop.set()
 
     def _write(self, text: str) -> None:
         stream: IO[str] = self._console.file
         try:
             stream.write(text)
             stream.flush()
-        except (OSError, ValueError):  # pragma: no cover - 流已关闭
-            pass
+        except (OSError, ValueError) as exc:  # pragma: no cover - 流已关闭
+            logging.getLogger(__name__).debug("终端控制序列写入失败: %s", exc)
 
     def _push_taskbar(self, state: int, percent: int) -> None:
         if not self._enabled:

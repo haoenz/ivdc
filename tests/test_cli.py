@@ -35,7 +35,7 @@ def test_version_flag() -> None:
     [
         ["opt", "--codec", "h264"],
         ["opt", "--cuda", "full"],
-        ["opt", "--throttle", "99"],
+        ["opt", "--workers", "99"],
         ["dl", "--on-error", "explode"],
     ],
 )
@@ -60,12 +60,24 @@ def test_dl_on_missing_task_file_returns_env_error(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(not HAS_FFMPEG, reason="需要 ffmpeg")
-def test_opt_what_if_on_empty_directory_is_ok(tmp_path: Path) -> None:
-    result = runner.invoke(app, ["opt", "-p", str(tmp_path), "--what-if"])
+def test_opt_dry_run_on_empty_directory_is_ok(tmp_path: Path) -> None:
+    result = runner.invoke(app, ["opt", "-p", str(tmp_path), "--dry-run"])
     assert result.exit_code == EXIT_OK
 
 
 @pytest.mark.skipif(not HAS_FFMPEG, reason="需要 ffmpeg")
-def test_clean_what_if_on_untouched_directory_is_ok(tmp_path: Path) -> None:
-    result = runner.invoke(app, ["clean", "-p", str(tmp_path), "--all", "--what-if"])
+def test_clean_dry_run_on_untouched_directory_is_ok(tmp_path: Path) -> None:
+    result = runner.invoke(app, ["clean", "-p", str(tmp_path), "--all", "--dry-run"])
     assert result.exit_code == EXIT_OK
+
+
+@pytest.mark.parametrize("option", ["--what-if", "--throttle"])
+def test_removed_options_are_not_aliases(option):
+    result = runner.invoke(app, ["opt", option])
+    assert result.exit_code == 2
+
+
+def test_help_exposes_python_options():
+    result = runner.invoke(app, ["opt", "--help"])
+    assert "--dry-run" in result.stdout
+    assert "--workers" in result.stdout

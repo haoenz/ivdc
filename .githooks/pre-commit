@@ -1,0 +1,15 @@
+#!/bin/sh
+# Check only: never format, stage, stash, or rewrite the developer's files.
+set -eu
+
+cd "$(git rev-parse --show-toplevel)"
+if ! command -v uv >/dev/null 2>&1; then
+    echo 'ivdc: Git hooks require uv; install uv and run uv sync --locked.' >&2
+    exit 1
+fi
+
+git diff --cached --check
+uv lock --check
+uv run --locked ruff format --check .
+uv run --locked ruff check .
+uv run --locked pyright

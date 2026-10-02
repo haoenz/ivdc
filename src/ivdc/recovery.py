@@ -1,67 +1,100 @@
-"""中断残留的恢复策略。
+"""文件暂存、提交和恢复；原文件在提交前始终可用，旧备份从不覆盖。"""
 
-一次运行被打断（Ctrl+C、断电、任务被杀）会留下两类残留：源文件已经移进
-``.ivdc/backups/`` 而成片还没落地，以及 ``.ivdc/segs/`` 下的半成品分片。这里负责
-把前者还原回工作目录，并决定后者是留（分片模式，下次续压）还是丢（整片模式已无用）。
-
-单独成模块而不是留在 :mod:`ivdc.store`：它是一条带安全语义的恢复策略，与那边的
-字节级读写工具不是一回事。
-"""
-
-from __future__ import annotations
-
+import logging
 import os
+import shutil
+import tempfile
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from ivdc.fs import IvdcLayout
-from ivdc.store import remove_tree
 
-__all__ = ["RecoveryReport", "recover_backups"]
+logger = logging.getLogger(__name__)
+
+
+def atomic_copy(source: Path, target: Path) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, name = tempfile.mkstemp(prefix=".ivdc-copy-", suffix=".tmp", dir=target.parent)
+    temporary = Path(name)
+    try:
+        with os.fdopen(descriptor, "wb") as output, source.open("rb") as input_file:
+            shutil.copyfileobj(input_file, output)
+            output.flush()
+            os.fsync(output.fileno())
+        shutil.copystat(source, temporary)
+        os.replace(temporary, target)
+    finally:
+        discard_file(temporary)
+
+
+def discard_file(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except OSError as exc:
+        logger.warning("未能清理 %s: %s", path, exc)
+
+
+def pending_backups(layout: IvdcLayout) -> dict[str, Path]:
+    return {
+        path.relative_to(layout.backups_dir).as_posix(): path
+        for path in sorted(layout.backups_dir.rglob("*"))
+        if path.is_file()
+        and not path.is_symlink()
+        and not (path.name.startswith(".ivdc-copy-") and path.name.endswith(".tmp"))
+        and not (layout.root / path.relative_to(layout.backups_dir)).exists()
+    }
 
 
 @dataclass
 class RecoveryReport:
-    """启动时对上次中断残留的处理结果。
-
-    ``failures`` 里的每条都已带上下文，调用方直接打印即可——还原失败意味着工作目录
-    里那个文件仍然是缺席状态，必须让用户看见，不能静默跳过。
-    """
-
     restored: list[str] = field(default_factory=list)
-    discarded_segments: list[str] = field(default_factory=list)
     failures: list[str] = field(default_factory=list)
 
 
-def recover_backups(layout: IvdcLayout, *, keep_segments: bool) -> RecoveryReport:
-    """把上次中断留下的备份还原回工作目录。
-
-    备份还在而成片不在，说明上次是在「源文件已移入备份、输出还没落地」之间被中断的。
-    还原之后工作目录里永远只见成片，不会留下容易让人误判的 ``.original`` 之类的残骸。
-
-    分片模式下保留分片目录供下次续压；整片模式下分片已经没用，顺手清掉。
-    """
+def recover_backups(layout: IvdcLayout) -> RecoveryReport:
     report = RecoveryReport()
-    backups_dir = layout.backups_dir
-    if not backups_dir.is_dir():
-        return report
-
-    for entry in sorted(backups_dir.iterdir()):
-        if not entry.is_file():
-            continue
-        name = entry.name
-        final_path = layout.root / name
-        if final_path.exists():
-            continue
+    for name, backup in pending_backups(layout).items():
         try:
-            os.replace(entry, final_path)
+            atomic_copy(backup, layout.root / name)
         except OSError as exc:
             report.failures.append(f"还原备份 {name} 失败: {exc}")
-            continue
-        report.restored.append(name)
-        seg_dir = layout.seg_dir(name)
-        if not keep_segments and seg_dir.is_dir():
-            if remove_tree(seg_dir):
-                report.discarded_segments.append(name)
-            else:
-                report.failures.append(f"删除无用的分片目录 {name} 失败，仍留在 {seg_dir}")
+        else:
+            report.restored.append(name)
     return report
+
+
+@dataclass
+class FileTransaction:
+    layout: IvdcLayout
+    name: str
+    keep_backup: bool
+    created_backup: bool = False
+
+    @property
+    def source(self) -> Path:
+        return self.layout.root / self.name
+
+    @property
+    def output(self) -> Path:
+        return self.layout.tmp(self.name)
+
+    def prepare(self) -> None:
+        self.output.parent.mkdir(parents=True, exist_ok=True)
+        backup = self.layout.backup(self.name)
+        if backup.exists() and not backup.is_file():
+            raise IsADirectoryError(f"备份路径不是文件: {backup}")
+        if not backup.exists():
+            atomic_copy(self.source, backup)
+            self.created_backup = True
+
+    def commit(self) -> tuple[int, int]:
+        old_bytes = self.source.stat().st_size
+        new_bytes = self.output.stat().st_size
+        os.replace(self.output, self.source)
+        if not self.keep_backup and self.created_backup:
+            discard_file(self.layout.backup(self.name))
+        return old_bytes, new_bytes
+
+    def rollback(self) -> None:
+        # 提交是单次原子替换；失败时源文件仍在原位。
+        discard_file(self.output)

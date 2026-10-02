@@ -48,8 +48,7 @@ def new_tag(length: int = TAG_LENGTH, rng: random.Random | None = None) -> str:
 def sanitize_filename(name: str) -> str:
     """把任意标题清洗成 Windows 上合法的文件名主干（不含扩展名）。
 
-    下载与压制两条路径共用这一套规则，**没有例外**（见 SPEC.md §6.2）：漏掉任何一条
-    路径，含 ``: / ?`` 之类的标题就会在落盘时失败。保留空格以便阅读。
+    清单标题和下载器提供的标题使用相同规则，保留空格以便阅读。
     """
     cleaned = _CONTROL.sub("_", name)
     cleaned = _WHITESPACE.sub(" ", cleaned)

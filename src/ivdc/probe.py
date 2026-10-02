@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 
@@ -37,24 +38,28 @@ def has_cuda_hwaccel(hwaccels_output: str) -> bool:
     return "cuda" in hwaccels_output
 
 
-def parse_media_info(payload: dict) -> MediaInfo:
+def parse_media_info(payload: dict[str, object]) -> MediaInfo:
     """解析 ``ffprobe -of json`` 的结果。
 
-    一次 ``-show_format -show_streams`` 同时取回时长与视频编码（见 SPEC.md §6.7）：
+    一次 ``-show_format -show_streams`` 同时取回时长与视频编码：
     分两次调用会让探测开销翻倍，中间还多出一个两次结果不一致的窗口。
     取不到时长返回 0，由调用方按「无法获取时长」处理。
     """
     duration = 0.0
-    raw_duration = (payload.get("format") or {}).get("duration")
+    format_info = payload.get("format")
+    raw_duration = format_info.get("duration") if isinstance(format_info, dict) else None
     if raw_duration is not None:
         try:
-            duration = float(raw_duration)
-        except (TypeError, ValueError):
+            duration = float(str(raw_duration))
+        except TypeError, ValueError:
             duration = 0.0
 
+    if not math.isfinite(duration) or duration < 0:
+        duration = 0.0
     codec_name = ""
-    for stream in payload.get("streams") or []:
-        if stream.get("codec_type") == "video":
+    streams = payload.get("streams")
+    for stream in streams if isinstance(streams, list) else []:
+        if isinstance(stream, dict) and stream.get("codec_type") == "video":
             codec_name = str(stream.get("codec_name") or "").strip()
             break
 

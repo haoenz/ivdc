@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+
+cd "$(git rev-parse --show-toplevel)"
+sh .githooks/pre-commit
+
+for tool in ffmpeg ffprobe; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+        echo "ivdc: pre-push requires $tool; skipped media tests are not verification." >&2
+        exit 1
+    fi
+done
+
+# The full suite already includes every integration test. Git supplies ref updates
+# on stdin; pytest must not consume them or wait for interactive input.
+uv run --locked pytest -rs </dev/null

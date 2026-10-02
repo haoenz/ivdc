@@ -3,7 +3,7 @@ name = "ivdc"
 version = "0.1.0"
 description = "Interactive video downloader & compressor powered by yt-dlp and ffmpeg (H.265 / AV1 / VP9, CUDA)"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.14"
 dependencies = [
     "yt-dlp",
     "rich",
@@ -16,6 +16,8 @@ ivdc = "ivdc.cli:main"
 [dependency-groups]
 dev = [
     "pytest",
+    "ruff",
+    "pyright",
 ]
 
 [build-system]
@@ -29,3 +31,18 @@ packages = ["src/ivdc"]
 testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "-q"
+markers = ["integration: uses real ffmpeg / ffprobe with generated temporary media"]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pyright]
+include = ["src/ivdc"]
+pythonVersion = "3.14"
+venvPath = "."
+venv = ".venv"
+typeCheckingMode = "standard"

@@ -1,8 +1,4 @@
-"""输出格式化（纯逻辑，不碰 I/O）。
-
-这里的字符串是**对外契约**：屏幕输出与日志文件都依赖它逐字符稳定，改动即改变
-既有日志的样子，跨时间的日志比对会因此对不上。格式清单见 SPEC.md §4。
-"""
+"""终端与处理日志的纯格式化函数。"""
 
 from __future__ import annotations
 
@@ -59,9 +55,7 @@ def _format_minutes(minutes: float) -> str:
     return f"{minutes:.1f}"
 
 
-def format_log_line(
-    day: date, name: str, old_bytes: int, new_bytes: int, minutes: float
-) -> str:
+def format_log_line(day: date, name: str, old_bytes: int, new_bytes: int, minutes: float) -> str:
     """压制成功写入日志的一行。
 
     格式：``26-09-11 a.mp4 | 1,234MB -> 567MB | 3.5m``
@@ -131,7 +125,7 @@ def format_download_status(
 
 
 def shorten_label(name: str, limit: int = _DEFAULT_LABEL_LIMIT) -> str:
-    """过长的文件名截成 ``前10..后3``（截断点固定，改动会让进度条标签左右不一致）。"""
+    """过长的文件名截成 ``前10..后3``。"""
     if len(name) <= limit:
         return name
     head = max(1, limit - 5)

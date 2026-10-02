@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from ivdc.errors import StorageError
 from ivdc.fs import STATUS_OK, FileRecord, IvdcLayout, Manifest
 from ivdc.store import (
     append_line,
@@ -70,8 +71,9 @@ def test_read_lines_strips_bom(tmp_path: Path) -> None:
     assert read_lines(path) == ["标题", "two"]
 
 
-def test_read_lines_on_missing_file_is_empty(tmp_path: Path) -> None:
-    assert read_lines(tmp_path / "nope.txt") == []
+def test_read_lines_on_missing_file_raises(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError):
+        read_lines(tmp_path / "nope.txt")
 
 
 def test_read_nonempty_lines_drops_blank_lines(tmp_path: Path) -> None:
@@ -118,7 +120,8 @@ def test_load_manifest_on_missing_or_corrupt_file(layout: IvdcLayout) -> None:
     assert load_manifest(layout).entries == {}
     layout.manifest_path.parent.mkdir(parents=True, exist_ok=True)
     layout.manifest_path.write_text("{ not json", encoding="utf-8")
-    assert load_manifest(layout).entries == {}
+    with pytest.raises(StorageError, match="manifest 无效"):
+        load_manifest(layout)
 
 
 # ---- 临时目录 -------------------------------------------------------------
@@ -210,3 +213,60 @@ def test_resolve_log_path_relative_is_resolved_against_cwd(
 def test_resolve_log_path_absolute_is_kept(layout: IvdcLayout, tmp_path: Path) -> None:
     absolute = tmp_path / "elsewhere" / "x.log"
     assert resolve_log_path(layout, absolute) == absolute
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        [],
+        {"version": 99},
+        {"entries": []},
+        {"entries": {"a": {"name": "a", "status": "unknown"}}},
+        {"entries": {"a": {"name": "a", "status": "ok", "seconds": float("nan")}}},
+        {"entries": {"a": {"name": "a", "status": "ok", "old_bytes": "1"}}},
+        {"entries": {"a": {"name": "b", "status": "ok"}}},
+    ],
+)
+def test_invalid_manifest_is_preserved(layout, payload):
+    import json
+
+    layout.state_dir.mkdir()
+    text = json.dumps(payload)
+    layout.manifest_path.write_text(text, encoding="utf-8")
+    with pytest.raises(StorageError):
+        load_manifest(layout)
+    assert layout.manifest_path.read_text(encoding="utf-8") == text
+
+
+def test_read_permission_failure_is_not_empty(tmp_path, monkeypatch):
+    def denied(*args, **kwargs):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(Path, "read_text", denied)
+    with pytest.raises(PermissionError):
+        read_lines(tmp_path / "tasks.txt")
+
+
+def test_atomic_write_failure_keeps_existing_contents(tmp_path, monkeypatch):
+    path = tmp_path / "tasks.txt"
+    path.write_text("keep", encoding="utf-8")
+
+    def denied(*args):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr("ivdc.store.os.replace", denied)
+    with pytest.raises(PermissionError):
+        atomic_write_text(path, "new")
+    assert path.read_text(encoding="utf-8") == "keep"
+    assert list(tmp_path.iterdir()) == [path]
+
+
+def test_atomic_writes_use_unique_temporary_files(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    path = tmp_path / "shared.json"
+    values = [str(index) * 10000 for index in range(8)]
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(lambda text: atomic_write_text(path, text), values))
+    assert path.read_text(encoding="utf-8") in values
+    assert list(tmp_path.iterdir()) == [path]
