@@ -8,6 +8,7 @@ from ivdc.errors import MediaError, SetupError
 from ivdc.fs import STATE_DIR_NAME, IvdcLayout
 from ivdc.naming import new_tag
 from ivdc.plan import Segment, plan_segments
+from ivdc.probe import MediaInfo
 from ivdc.probe_runtime import Toolchain, probe_many
 from ivdc.recovery import pending_backups
 from ivdc.runner import ProcessRunner
@@ -49,6 +50,7 @@ class VideoTask:
     duration: float
     segments: tuple[Segment, ...] = ()
     error: str = ""
+    media: MediaInfo | None = None
 
 
 @dataclass(frozen=True)
@@ -98,11 +100,19 @@ def build_plan(
             continue
         segments: tuple[Segment, ...] = ()
         error = ""
+        duration = info.duration
         if options.segment_minutes:
+            duration = info.video_duration or info.duration
             try:
-                segments = tuple(plan_segments(info.duration, options.segment_minutes * 60))
+                segments = tuple(
+                    plan_segments(
+                        duration,
+                        options.segment_minutes * 60,
+                        minimum_tail=1 / info.frame_rate if info.frame_rate > 0 else 0,
+                    )
+                )
             except ValueError as exc:
                 error = f"无法规划分片: {exc}"
-        tasks.append(VideoTask(name, layout.root / name, label, info.duration, segments, error))
+        tasks.append(VideoTask(name, layout.root / name, label, duration, segments, error, info))
     temporary = tuple(sorted(p for p in layout.tmp_dir.rglob("*") if p.is_file()))
     return OptimizationPlan(tuple(tasks), tuple(skipped), tuple(recoveries), temporary)

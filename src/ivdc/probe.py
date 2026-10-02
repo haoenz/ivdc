@@ -9,6 +9,7 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass
+from fractions import Fraction
 
 __all__ = ["MediaInfo", "has_cuda_hwaccel", "has_encoder", "parse_media_info"]
 
@@ -19,6 +20,22 @@ class MediaInfo:
 
     duration: float
     codec_name: str
+    video_duration: float = 0.0
+    frame_rate: float = 0.0
+    time_base: float = 0.0
+    width: int = 0
+    height: int = 0
+    stream_types: tuple[str, ...] = ()
+    nominal_frame_rate: float = 0.0
+    frame_count: int = 0
+
+
+def _positive_number(value: object) -> float:
+    try:
+        number = float(Fraction(str(value)))
+    except ValueError, ZeroDivisionError, OverflowError:
+        return 0.0
+    return number if math.isfinite(number) and number > 0 else 0.0
 
 
 def has_encoder(encoders_output: str, name: str) -> bool:
@@ -56,11 +73,24 @@ def parse_media_info(payload: dict[str, object]) -> MediaInfo:
 
     if not math.isfinite(duration) or duration < 0:
         duration = 0.0
-    codec_name = ""
     streams = payload.get("streams")
-    for stream in streams if isinstance(streams, list) else []:
-        if isinstance(stream, dict) and stream.get("codec_type") == "video":
-            codec_name = str(stream.get("codec_name") or "").strip()
-            break
-
-    return MediaInfo(duration=duration, codec_name=codec_name)
+    streams = (
+        [item for item in streams if isinstance(item, dict)] if isinstance(streams, list) else []
+    )
+    kinds = tuple(sorted(str(item.get("codec_type", "")) for item in streams))
+    for stream in streams:
+        if stream.get("codec_type") == "video":
+            width, height = stream.get("width"), stream.get("height")
+            return MediaInfo(
+                duration=duration,
+                codec_name=str(stream.get("codec_name") or "").strip(),
+                video_duration=_positive_number(stream.get("duration")),
+                frame_rate=_positive_number(stream.get("avg_frame_rate")),
+                time_base=_positive_number(stream.get("time_base")),
+                width=width if type(width) is int else 0,
+                height=height if type(height) is int else 0,
+                stream_types=kinds,
+                nominal_frame_rate=_positive_number(stream.get("r_frame_rate")),
+                frame_count=int(_positive_number(stream.get("nb_frames"))),
+            )
+    return MediaInfo(duration=duration, codec_name="", stream_types=kinds)

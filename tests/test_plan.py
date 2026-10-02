@@ -51,3 +51,18 @@ def test_durations_cover_the_whole_file() -> None:
 def test_invalid_input_raises(duration: float, segment_seconds: float) -> None:
     with pytest.raises(ValueError):
         plan_segments(duration, segment_seconds)
+
+
+def test_subframe_tail_is_merged_without_dropping_duration():
+    segments = plan_segments(3.003, 1, minimum_tail=1001 / 30000)
+    assert len(segments) == 3
+    assert [part.index for part in segments] == [0, 1, 2]
+    assert segments[-1].start == 2
+    assert segments[-1].duration == pytest.approx(1.003)
+    assert sum(part.duration for part in segments) == pytest.approx(3.003)
+
+
+@pytest.mark.parametrize("value", [-1, float("nan"), float("inf")])
+def test_invalid_minimum_tail_is_rejected(value):
+    with pytest.raises(ValueError):
+        plan_segments(3, 1, minimum_tail=value)

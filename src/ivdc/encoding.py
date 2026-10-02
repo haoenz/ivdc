@@ -1,8 +1,6 @@
 """编码执行与可恢复分片校验；不调度、不提交成片、不接触终端。"""
 
-import json
 import logging
-import os
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -11,13 +9,15 @@ from pathlib import Path
 from ivdc.encode import EncodingConfig, build_ffmpeg_args
 from ivdc.errors import MediaError
 from ivdc.fs import CONCAT_LIST_NAME, IvdcLayout, concat_lines
+from ivdc.media_validation import validate_media
 from ivdc.optimization_plan import VideoTask
 from ivdc.parse import is_progress_line, parse_out_time, parse_progress_line
 from ivdc.plan import Segment
 from ivdc.probe_runtime import Toolchain, probe_media
 from ivdc.recovery import discard_file
 from ivdc.runner import CommandError, CommandResult, ProcessRunner
-from ivdc.store import atomic_write_text, write_lines
+from ivdc.segment_state import SegmentContext, archive_files
+from ivdc.store import write_lines
 
 logger = logging.getLogger(__name__)
 type ProgressKey = tuple[str, int | None]
@@ -88,63 +88,66 @@ class Encoder:
         if not target.is_file() or target.stat().st_size == 0:
             raise MediaError("ffmpeg 未生成目标文件")
 
-    def prepare_segments(self, task: VideoTask) -> None:
-        directory = self.layout.seg_dir(task.name)
-        metadata_path = directory / "resume.json"
-        stat = task.path.stat()
-        metadata = {
-            "source_size": stat.st_size,
-            "source_mtime_ns": stat.st_mtime_ns,
-            "codec": self.config.codec_name,
-            "encoder_args": list(self.config.encoder_args),
-            "segments": [[part.start, part.duration] for part in task.segments],
-        }
-        if metadata_path.exists():
-            try:
-                previous = json.loads(metadata_path.read_text(encoding="utf-8-sig"))
-            except (ValueError, UnicodeError) as exc:
-                raise MediaError(f"无法读取断点元数据 {metadata_path}: {exc}") from exc
-            if previous != metadata:
-                archive = directory.with_name(f"{directory.name}.resume-{uuid.uuid4().hex}")
-                os.replace(directory, archive)
-                logger.warning("编码参数或源文件变化，原分片保留在 %s", archive)
-        directory.mkdir(parents=True, exist_ok=True)
-        atomic_write_text(metadata_path, json.dumps(metadata, ensure_ascii=False) + "\n")
+    def validate(
+        self,
+        task: VideoTask,
+        path: Path,
+        duration: float,
+        *,
+        decode: bool = True,
+        start: float = 0.0,
+    ) -> None:
+        reference = task.media or probe_media(self.toolchain, task.path, self.runner)
+        validate_media(
+            self.toolchain,
+            self.runner,
+            path,
+            reference,
+            self.config.codec_name,
+            duration,
+            decode=decode,
+            start=start,
+        )
 
-    def segment(self, task: VideoTask, part: Segment) -> SegmentResult:
+    def segment(self, task: VideoTask, part: Segment, context: SegmentContext) -> SegmentResult:
         target = self.layout.seg(task.name, part.index)
         self.runner.check_cancelled()
-        writing = False
+        temporary = target.with_name(f"{target.stem}.{uuid.uuid4().hex}.partial.mp4")
+        ready = False
         try:
-            reused = False
             if target.is_file():
-                try:
-                    info = probe_media(self.toolchain, target, self.runner)
-                    reused = (
-                        info.codec_name == self.config.codec_name
-                        and abs(info.duration - part.duration) <= 0.5
-                    )
-                except MediaError:
-                    pass  # 损坏的分片可以重压，启动失败则不能当作损坏数据。
-            if not reused:
-                if target.exists():
-                    archive = target.parent.with_name(
-                        f"{target.parent.name}.retained-{uuid.uuid4().hex}"
-                    )
-                    archive.mkdir(parents=True)
-                    os.replace(target, archive / target.name)
-                    logger.warning("不能复用的已有分片保留在 %s", archive)
-                writing = True
-                self.encode(task, target, part)
+                completed = context.completed(target, part.index)
+                if completed or part.index in context.legacy_indices:
+                    try:
+                        self.validate(
+                            task, target, part.duration, decode=not completed, start=part.start
+                        )
+                    except MediaError:
+                        pass  # 不能确认完整的旧分片先归档；命令启动失败向外传播。
+                    else:
+                        self.progress((task.name, part.index), part.duration)
+                        return SegmentResult(task.name, part.index, target, reused=True)
+            if target.exists():
+                archive_files(target)
+            self.encode(task, temporary, part)
+            self.validate(task, temporary, part.duration, start=part.start)
+            self.runner.check_cancelled()
             self.progress((task.name, part.index), part.duration)
-            return SegmentResult(task.name, part.index, target, reused)
+            ready = True
+            # 临时文件由协调线程发布；线程异常或取消不会产生完成凭据。
+            return SegmentResult(task.name, part.index, temporary)
         except (MediaError, CommandError, OSError) as exc:
-            if writing:
-                discard_file(target)
             return SegmentResult(task.name, part.index, target, error=str(exc))
+        finally:
+            if not ready:
+                discard_file(temporary)
 
     def concatenate(self, task: VideoTask, results: list[SegmentResult], target: Path) -> None:
-        if len(results) != len(task.segments) or any(result.error for result in results):
+        if (
+            {result.index for result in results} != {part.index for part in task.segments}
+            or len(results) != len(task.segments)
+            or any(result.error for result in results)
+        ):
             errors = "; ".join(result.error for result in results if result.error)
             raise MediaError(f"部分分片缺失或失败: {errors}")
         list_path = self.layout.seg_dir(task.name) / CONCAT_LIST_NAME
@@ -172,3 +175,4 @@ class Encoder:
         )
         if not result.ok or not target.is_file():
             raise MediaError(failure_reason(result))
+        self.validate(task, target, task.duration)

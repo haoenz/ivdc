@@ -3,7 +3,7 @@
 import time
 from collections.abc import Callable
 from concurrent.futures import as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from ivdc.encode import resolve_encode_config
 from ivdc.encoding import Encoder, ProgressCallback, SegmentResult
@@ -14,6 +14,7 @@ from ivdc.probe_runtime import find_toolchain, probe_environment
 from ivdc.records import ResultRecorder
 from ivdc.recovery import FileTransaction, recover_backups
 from ivdc.runner import CommandError, ProcessRunner, worker_pool
+from ivdc.segment_state import SegmentContext, prepare_segments
 from ivdc.store import (
     clear_tmp,
     load_manifest,
@@ -89,6 +90,7 @@ def _execute(
     # 只有进度回调来自工作线程；分片结果、提交与记账都由协调线程拥有。
     prepared: dict[str, tuple[VideoTask, FileTransaction, float]] = {}
     segment_results: dict[str, list[SegmentResult]] = {}
+    contexts: dict[str, SegmentContext] = {}
     with worker_pool(encoder.runner, options.workers) as pool:
         whole_jobs = {}
         segment_jobs = {}
@@ -104,7 +106,7 @@ def _execute(
                 continue
             try:
                 transaction.prepare()
-                encoder.prepare_segments(task)
+                contexts[task.name] = prepare_segments(encoder.layout, encoder.config, task)
             except (OSError, MediaError) as exc:
                 transaction.rollback()
                 finish(_record(task, encoder.config.codec_name, started, error=str(exc)))
@@ -112,7 +114,9 @@ def _execute(
             prepared[task.name] = (task, transaction, started)
             segment_results[task.name] = []
             for segment in task.segments:
-                segment_jobs[pool.submit(encoder.segment, task, segment)] = task
+                segment_jobs[pool.submit(encoder.segment, task, segment, contexts[task.name])] = (
+                    task
+                )
         try:
             for future in as_completed([*whole_jobs, *segment_jobs]):
                 result = future.result()
@@ -120,6 +124,11 @@ def _execute(
                     finish(result)
                     continue
                 task, transaction, started = prepared[result.name]
+                if not result.error:
+                    encoder.runner.check_cancelled()
+                    target = encoder.layout.seg(task.name, result.index)
+                    contexts[task.name].publish(result.path, target, result.index)
+                    result = replace(result, path=target)
                 results = segment_results[result.name]
                 results.append(result)
                 if len(results) != len(task.segments):

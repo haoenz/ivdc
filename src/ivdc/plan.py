@@ -22,7 +22,9 @@ class Segment:
     duration: float
 
 
-def plan_segments(duration: float, segment_seconds: float) -> list[Segment]:
+def plan_segments(
+    duration: float, segment_seconds: float, *, minimum_tail: float = _TAIL_EPSILON
+) -> list[Segment]:
     """把总时长切成等长分片，最后一片按剩余时长收尾。
 
     ``duration`` 或 ``segment_seconds`` 不合法时抛 ValueError，由调用方提示并跳过该
@@ -36,6 +38,8 @@ def plan_segments(duration: float, segment_seconds: float) -> list[Segment]:
         raise ValueError("时长必须大于 0")
     if not math.isfinite(segment_seconds) or segment_seconds <= 0:
         raise ValueError("分片时长必须大于 0")
+    if not math.isfinite(minimum_tail) or minimum_tail < 0:
+        raise ValueError("最短尾片时长必须为有限非负数")
 
     count = max(1, math.ceil(duration / segment_seconds - _RATIO_EPSILON))
     segments = [
@@ -47,7 +51,7 @@ def plan_segments(duration: float, segment_seconds: float) -> list[Segment]:
         for index in range(count)
     ]
 
-    if len(segments) > 1 and segments[-1].duration < _TAIL_EPSILON:
+    if len(segments) > 1 and segments[-1].duration < max(_TAIL_EPSILON, minimum_tail):
         segments.pop()
         prev = segments[-1]
         segments[-1] = Segment(index=prev.index, start=prev.start, duration=duration - prev.start)

@@ -81,3 +81,46 @@ def test_parse_media_info_tolerates_missing_fields(payload: dict) -> None:
     info = parse_media_info(payload)
     assert info.duration == 0.0
     assert info.codec_name == ""
+
+
+def test_video_duration_is_independent_of_audio_padded_container():
+    info = parse_media_info(
+        {
+            "format": {"duration": "1.0"},
+            "streams": [
+                {"codec_type": "audio", "codec_name": "aac", "duration": "1.0"},
+                {
+                    "codec_type": "video",
+                    "codec_name": "hevc",
+                    "duration": "0.6",
+                    "avg_frame_rate": "30000/1001",
+                    "time_base": "1/30000",
+                    "width": 64,
+                    "height": 64,
+                },
+            ],
+        }
+    )
+    assert info.duration == 1
+    assert info.video_duration == 0.6
+    assert info.frame_rate == pytest.approx(30000 / 1001)
+    assert info.time_base == pytest.approx(1 / 30000)
+    assert (info.width, info.height) == (64, 64)
+    assert info.stream_types == ("audio", "video")
+
+
+@pytest.mark.parametrize("value", [None, "N/A", "0/0", "nan", "inf", "-1", ""])
+def test_unreliable_timing_fields_remain_unknown(value):
+    info = parse_media_info(
+        {
+            "streams": [
+                {
+                    "codec_type": "video",
+                    "duration": value,
+                    "avg_frame_rate": value,
+                    "time_base": value,
+                }
+            ]
+        }
+    )
+    assert info.video_duration == info.frame_rate == info.time_base == 0
