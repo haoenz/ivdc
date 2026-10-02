@@ -1,4 +1,31 @@
 {
   "impersonate_domains": [],
-  "impersonate_target": "chrome-136"
+  "impersonate_target": "chrome-136",
+  "quality_profiles": {
+    "libx265": {
+      "high": 24,
+      "medium": 28,
+      "low": 32
+    },
+    "libsvtav1": {
+      "high": 28,
+      "medium": 35,
+      "low": 42
+    },
+    "libvpx-vp9": {
+      "high": 25,
+      "medium": 31,
+      "low": 37
+    },
+    "hevc_nvenc": {
+      "high": 23,
+      "medium": 28,
+      "low": 33
+    },
+    "av1_nvenc": {
+      "high": 25,
+      "medium": 30,
+      "low": 35
+    }
+  }
 }

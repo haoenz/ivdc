@@ -7,7 +7,9 @@
 | Python 3.11+ | Python 3.14+ |
 | `opt --what-if` / `clean --what-if` | `opt --dry-run` / `clean --dry-run` |
 | `opt --throttle N` | `opt --workers N` |
+| `opt --crf N` | `opt --quality high\|medium\|low`，数值在配置的 `quality_profiles` 中维护 |
 | `OptOptions.what_if / throttle` | `OptimizeOptions.dry_run / workers` |
+| `OptimizeOptions.crf` | `OptimizeOptions.quality`，类型为 `ivdc.quality.Quality` |
 | `DlOptions` | `DownloadOptions` |
 | `EncodeConfig` | `EncodingConfig` |
 | `impersonateDomains` | `impersonate_domains` |
@@ -19,11 +21,26 @@
 使用旧自定义位置时设置 `IVDC_CONFIG`，或将配置复制到新平台路径。首次下载不再自动写配置，
 示例见 [config.example.json](config.example.json)。
 
+画质入口改为 `--quality`，默认 `medium`，不保留 `--crf` 别名。已有下载配置无需修改，
+可添加 `quality_profiles`，按 `libx265`、`libsvtav1`、`libvpx-vp9`、`hevc_nvenc`、`av1_nvenc`
+分别覆盖 high/medium/low；只写需要改变的档位即可。完整默认表、范围与依据见 README。
+例如原来使用 `--crf 20` 的 x265 任务，可配置 `{"quality_profiles":{"libx265":{"high":20}}}`，
+以后使用 `--quality high`。硬件与软件数值独立，回退时不再把硬件值直接交给软件编码器。
+配置错误（包括未使用的编码器条目）会在启动媒体工具、恢复、清理及备份前返回退出码 2。
+
+SVT-AV1 中档从此前 CRF 30 调整为官方默认 35；需要保持旧数值时配置
+`{"quality_profiles":{"libsvtav1":{"medium":30}}}`。其它编码器中档数值保持不变，但 NVENC
+现在显式采用 VBR/CQ 并取消平均码率目标，不能据此承诺输出与旧版本相同。
+新版分片按实际 encoder_args 判断复用；实际参数变化时先归档原目录再重压，不删除旧分片。
+
 Python 调用方从 `ivdc.optimization_plan` 导入 `OptimizeOptions`，从 `ivdc.download` 导入
 `DownloadOptions`。`run_optimize`、`run_download`、`run_clean` 现在返回有类型的结果，
 不接收 Console 或返回进程退出码。前两者接受可选事件回调；终端、错误提示和退出码由 CLI 处理。
 底层子进程使用 `with ProcessRunner() as runner:` 与 `runner.capture / runner.stream`，
 不再提供全局进程集合或全局终止函数。启动失败抛带上下文的异常。
+`resolve_encode_config` 接收 `quality` 和 `quality_profiles`，不再接收 `crf`；
+`EncodingConfig` 用 `encoder`、`quality`、`quality_parameter`、`quality_value` 表示解析结果，
+不再用同一个 `crf` 字段兼指 CRF 和 CQ。
 
 行为变化：
 

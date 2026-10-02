@@ -10,6 +10,7 @@ from ivdc.naming import new_tag
 from ivdc.plan import Segment, plan_segments
 from ivdc.probe import MediaInfo
 from ivdc.probe_runtime import Toolchain, probe_many
+from ivdc.quality import Quality
 from ivdc.recovery import pending_backups
 from ivdc.runner import ProcessRunner
 
@@ -26,7 +27,7 @@ class OptimizeOptions:
     pattern: str = DEFAULT_PATTERN
     codec: str = DEFAULT_CODEC
     cuda: str = DEFAULT_CUDA
-    crf: int | None = None
+    quality: Quality = Quality.medium
     workers: int = DEFAULT_WORKERS
     segment_minutes: int = DEFAULT_SEGMENT_MINUTES
     log_file: Path | None = None
@@ -38,8 +39,8 @@ class OptimizeOptions:
     def __post_init__(self) -> None:
         if not 1 <= self.workers <= 64 or not 0 <= self.segment_minutes <= 1440:
             raise SetupError("workers 必须在 1–64 内，segment_minutes 必须在 0–1440 内")
-        if self.crf is not None and not 0 <= self.crf <= 63:
-            raise SetupError("crf 必须在 0–63 内")
+        if self.quality not in Quality:
+            raise SetupError("quality 必须是 high、medium 或 low")
 
 
 @dataclass(frozen=True)

@@ -1,15 +1,23 @@
 """编码器表与编码参数装配（纯逻辑，不碰 I/O）。
 
-编码器元数据集中在这一张表里，新增编码器只改这里；探测结果以参数形式传入，
-真正的子进程调用在调用方，因此所有判定分支都能被测试覆盖。
+编码器及参数模板集中在 CODECS，画质档位与数值约束由 quality 模块维护。
+探测结果以参数形式传入，真正的子进程调用在调用方，判定分支可独立测试。
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from ivdc.errors import SetupError
 from ivdc.probe import MediaInfo, has_cuda_hwaccel, has_encoder
+from ivdc.quality import (
+    DEFAULT_QUALITY_PROFILES,
+    QUALITY_SPECS,
+    Quality,
+    QualityLevels,
+    validate_quality_levels,
+)
 
 __all__ = [
     "CODECS",
@@ -26,7 +34,7 @@ __all__ = [
 class CodecSpec:
     """一个目标编码器的元数据。
 
-    ``sw_args`` / ``nvenc_args`` 是参数模板，``{crf}`` 占位符在装配时替换。模板内的
+    ``sw_args`` / ``nvenc_args`` 是参数模板，``{quality}`` 占位符在装配时替换。模板内的
     **参数先后顺序有语义**（``-tag:v hvc1`` 必须紧跟 ``-c:v``），调整模板前先看
     :func:`build_ffmpeg_args` 的说明。
     """
@@ -35,7 +43,6 @@ class CodecSpec:
     codec_name: str
     sw_encoder: str
     nvenc_encoder: str | None
-    default_crf: int
     sw_args: tuple[str, ...]
     nvenc_args: tuple[str, ...] | None
 
@@ -46,26 +53,34 @@ CODECS: dict[str, CodecSpec] = {
         codec_name="hevc",
         sw_encoder="libx265",
         nvenc_encoder="hevc_nvenc",
-        default_crf=28,
-        sw_args=("-c:v", "libx265", "-tag:v", "hvc1", "-crf", "{crf}"),
-        nvenc_args=("-c:v", "hevc_nvenc", "-tag:v", "hvc1", "-cq", "{crf}"),
+        sw_args=("-c:v", "libx265", "-tag:v", "hvc1", "-crf", "{quality}"),
+        nvenc_args=(
+            "-c:v",
+            "hevc_nvenc",
+            "-tag:v",
+            "hvc1",
+            "-rc",
+            "vbr",
+            "-cq",
+            "{quality}",
+            "-b:v",
+            "0",
+        ),
     ),
     "av1": CodecSpec(
         key="av1",
         codec_name="av1",
         sw_encoder="libsvtav1",
         nvenc_encoder="av1_nvenc",
-        default_crf=30,
-        sw_args=("-c:v", "libsvtav1", "-crf", "{crf}"),
-        nvenc_args=("-c:v", "av1_nvenc", "-cq", "{crf}"),
+        sw_args=("-c:v", "libsvtav1", "-crf", "{quality}"),
+        nvenc_args=("-c:v", "av1_nvenc", "-rc", "vbr", "-cq", "{quality}", "-b:v", "0"),
     ),
     "vp9": CodecSpec(
         key="vp9",
         codec_name="vp9",
         sw_encoder="libvpx-vp9",
         nvenc_encoder=None,
-        default_crf=31,
-        sw_args=("-c:v", "libvpx-vp9", "-crf", "{crf}", "-b:v", "0"),
+        sw_args=("-c:v", "libvpx-vp9", "-crf", "{quality}", "-b:v", "0"),
         nvenc_args=None,
     ),
 }
@@ -87,8 +102,18 @@ class EncodingConfig:
     hwaccel_args: tuple[str, ...] = ()
     use_nvenc: bool = False
     has_cuda: bool = False
-    crf: int = 0
+    encoder: str = ""
+    quality: Quality = Quality.medium
+    quality_parameter: str = ""
+    quality_value: int = 0
     notices: tuple[str, ...] = ()
+
+    @property
+    def quality_description(self) -> str:
+        return (
+            f"画质 {self.quality.value} | 编码器 {self.encoder} | "
+            f"{self.quality_parameter.upper()} {self.quality_value}"
+        )
 
 
 def resolve_encode_config(
@@ -98,7 +123,8 @@ def resolve_encode_config(
     encoders_output: str,
     hwaccels_output: str,
     gpu_available: bool,
-    crf: int | None = None,
+    quality: Quality = Quality.medium,
+    quality_profiles: Mapping[str, QualityLevels] = DEFAULT_QUALITY_PROFILES,
 ) -> EncodingConfig:
     """结合 ffmpeg 能力与显卡情况，决定最终用哪个编码器、要不要开硬件加速。
 
@@ -108,7 +134,10 @@ def resolve_encode_config(
     if codec not in CODECS:
         raise SetupError(f"未知编码器: {codec}")
     spec = CODECS[codec]
-    chosen_crf = spec.default_crf if crf is None else crf
+    try:
+        quality = Quality(quality)
+    except ValueError as exc:
+        raise SetupError("quality 必须是 high、medium 或 low") from exc
 
     if cuda not in CUDA_MODES:
         raise SetupError(f"未知的 CUDA 模式: {cuda}")
@@ -132,7 +161,17 @@ def resolve_encode_config(
 
     template = spec.nvenc_args if use_nvenc else spec.sw_args
     assert template is not None
-    encoder_args = tuple(arg.format(crf=chosen_crf) for arg in template)
+    encoder = spec.nvenc_encoder if use_nvenc else spec.sw_encoder
+    assert encoder is not None
+    levels = quality_profiles.get(encoder)
+    if levels is None:
+        raise SetupError(f"缺少编码器 {encoder} 的画质档位")
+    try:
+        validate_quality_levels(encoder, levels)
+    except ValueError as exc:
+        raise SetupError(str(exc)) from exc
+    quality_value = levels.value(quality)
+    encoder_args = tuple(arg.format(quality=quality_value) for arg in template)
 
     hwaccel_args: tuple[str, ...] = ()
     if has_cuda:
@@ -155,7 +194,10 @@ def resolve_encode_config(
         hwaccel_args=hwaccel_args,
         use_nvenc=use_nvenc,
         has_cuda=has_cuda,
-        crf=chosen_crf,
+        encoder=encoder,
+        quality=quality,
+        quality_parameter=QUALITY_SPECS[encoder].parameter,
+        quality_value=quality_value,
         notices=tuple(notices),
     )
 

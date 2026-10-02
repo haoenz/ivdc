@@ -56,11 +56,17 @@ ivdc opt -p /path/to/videos --codec av1 --workers 4
 ivdc opt --cuda off                        # 纯 CPU
 ivdc opt --cuda encode                     # CUDA 解码 + 可用时的 NVENC 编码
 ivdc opt --segments 10                     # 每 10 分钟一片，可断点恢复
-ivdc opt --crf 24
+ivdc opt --quality high                    # 高画质；默认 medium，也可选择 low
 ivdc opt --dry-run                         # 包括恢复、清理在内的只读计划
 ivdc opt --mask                            # 屏幕用随机标签，日志保留真实名称
 ivdc opt --debug                           # 标准 logging 诊断，包括底层命令
 ```
+
+`--quality high|medium|low` 表示高、中、低画质，高画质通常文件更大；它不控制分辨率或编码速度。
+默认 `medium`。各实际编码器的档位可在配置文件的 `quality_profiles` 中调整，见下文。
+程序先决定实际编码器，再选择对应数值；NVENC 不可用时使用软件编码器的同名档位。
+终端显示实际编码器、档位和 CRF/CQ 数值；实际处理时也写入日志，dry-run 不写日志。
+已是目标编码的文件仍跳过，改变画质档位不会强制重压这些成片。
 
 成片保留输入的文件名和目录，递归过滤也保留相对路径。源文件在成片提交之前始终可用：
 首次处理先复制备份，编码到 `.ivdc/tmp/`，成功后原子替换源文件；失败清理临时输出，
@@ -176,10 +182,57 @@ manifest 缺失可以从空记录开始；格式损坏、未知版本或读取�
 ```json
 {
   "impersonate_domains": [],
-  "impersonate_target": "chrome-136"
+  "impersonate_target": "chrome-136",
+  "quality_profiles": {
+    "libx265": {"high": 24, "medium": 28, "low": 32}
+  }
 }
 ```
 
 配置键只接受 snake_case。未知键、错误类型和损坏 JSON 会明确报错；BOM 输入仍支持。
 域名按主机名或其子域匹配，不匹配 URL 查询字符串。TLS impersonate 是可选能力，
 需要 `curl_cffi` 及支持目标的 yt-dlp；可选能力不可用时告警后使用普通下载。
+
+`quality_profiles` 按实际编码器名配置，名称来自 ffmpeg（包括 `libvpx-vp9` 中的连字符）。
+可以省略整个配置项、某个编码器或某一档，省略部分沿用内置值。完整示例见
+[config.example.json](config.example.json)。内置档位如下：
+
+| 实际编码器 | 参数 | high 高 | medium 中（默认） | low 低 | 配置整数范围 |
+| --- | --- | --- | --- | --- | --- |
+| `libx265` | CRF | 24 | 28 | 32 | 0–51 |
+| `libsvtav1` | CRF | 28 | 35 | 42 | 1–63 |
+| `libvpx-vp9` | CRF | 25 | 31 | 37 | 0–63 |
+| `hevc_nvenc` | CQ | 23 | 28 | 33 | 1–51 |
+| `av1_nvenc` | CQ | 25 | 30 | 35 | 1–63 |
+
+这些参数数值越小，目标画质越高。合并默认值后，每个编码器必须满足 `high < medium < low`。
+不接受未知编码器、未知档位、字符串、布尔值、小数或越界值；所有显式配置都校验，
+包括本轮未使用的编码器。压制会在启动媒体工具、备份、恢复、清理和日志写入前读取并验证配置，
+错误返回退出码 2，dry-run 同样检查。已有仅包含下载设置的配置无需补齐新字段。
+
+例如，只想把 x265 的高画质改为 20，可将 `quality_profiles` 写为
+`{"libx265": {"high": 20}}`；中、低档和其它编码器保持默认。
+分片身份包含实际编码参数：修改当前档位数值或切换实际编码器后，旧分片目录先归档再重压；
+只修改未使用的档位，不影响已有完成分片的复用。
+
+默认值的依据（2026-10-03 查阅）与边界：
+
+- x265 以官方默认 CRF 28 为中档，高、低档由本项目取上下各 4。
+  [x265 官方说明](https://x265.readthedocs.io/en/stable/cli.html#quality-rate-control-and-rate-distortion-options)
+- SVT-AV1 以官方默认 35 为中档，高、低档取上下各 7。项目使用 FFmpeg 的整数 CRF 接口，
+  固定支持 1–63；FFmpeg 7.1 的 0 表示未指定，不作为固定画质，新版 SVT 的扩展范围不自动开放。
+  [SVT-AV1 官方指南](https://github.com/AOMediaCodec/SVT-AV1/blob/main/Docs/svt-av1_encoder_user_guide.md)、
+  [FFmpeg 7.1.1 适配源码](https://github.com/FFmpeg/FFmpeg/blob/n7.1.1/libavcodec/libsvtav1.c)
+- VP9 以 Google 的 1080p 点播建议值 31 作为起点，高、低档取上下各 6。
+  原建议涉及分辨率和受限码率，本项目仅借用该数值作为初始策略，实际使用 `-b:v 0` 的质量模式。
+  [Google 推荐值](https://developers.google.com/media/vp9/settings/vod)、
+  [Google 码率模式说明](https://developers.google.com/media/vp9/bitrate-modes)
+- NVENC 使用显式 `-rc vbr -cq N -b:v 0`。保留项目原有 HEVC 28、AV1 30 作为中档，
+  高、低档取上下各 5；这些是项目初始策略，并非 NVIDIA 官方推荐的三档值。
+  CQ 0 表示自动，所以配置排除 0；HEVC 与 AV1 的上限分别为 51、63。
+  [NVIDIA 目标画质模式](https://docs.nvidia.com/video-technologies/video-codec-sdk/13.0/nvenc-video-encoder-api-prog-guide/index.html#rate-control)、
+  [FFmpeg HEVC 选项](https://github.com/FFmpeg/FFmpeg/blob/n7.1.1/libavcodec/nvenc_hevc.c)、
+  [FFmpeg AV1 选项](https://github.com/FFmpeg/FFmpeg/blob/n7.1.1/libavcodec/nvenc_av1.c)
+
+三档不是跨编码器等画质承诺，也不是无损承诺。软件编码测试使用生成的小样本验证执行流程；
+真实素材的主观画质、不同分辨率及 NVENC 实机效果仍需按用途评估，可据此调整配置。

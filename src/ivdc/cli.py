@@ -29,6 +29,7 @@ from ivdc.optimization_plan import (
 )
 from ivdc.optimize import run_optimize
 from ivdc.progress import ProgressDisplay
+from ivdc.quality import Quality
 from ivdc.runner import CommandError, RunCancelled
 from ivdc.views import DownloadDisplay, OptimizationDisplay, diagnostics, show_cleanup
 
@@ -79,10 +80,10 @@ def opt(
     pattern: Annotated[str, typer.Option("--filter", help="文件匹配规则")] = DEFAULT_PATTERN,
     codec: Annotated[Codec, typer.Option("--codec", help="目标编码")] = Codec.x265,
     cuda: Annotated[CudaMode, typer.Option("--cuda", help="CUDA 模式")] = CudaMode.decode,
-    crf: Annotated[
-        int | None,
-        typer.Option("--crf", min=0, max=63, help="压缩质量，默认随编码器（28 / 30 / 31）"),
-    ] = None,
+    quality: Annotated[
+        Quality,
+        typer.Option("--quality", help="画质：high 高 / medium 中 / low 低；高画质通常文件更大"),
+    ] = Quality.medium,
     workers: Annotated[
         int, typer.Option("--workers", min=1, max=64, help="并行任务数")
     ] = DEFAULT_WORKERS,
@@ -114,7 +115,7 @@ def opt(
             pattern=pattern,
             codec=codec.value,
             cuda=cuda.value,
-            crf=crf,
+            quality=quality,
             workers=workers,
             segment_minutes=segments,
             log_file=log,

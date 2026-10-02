@@ -15,6 +15,7 @@ from ivdc.config import (
     load_config,
 )
 from ivdc.errors import SetupError
+from ivdc.quality import DEFAULT_QUALITY_PROFILES, QUALITY_SPECS, QualityLevels
 
 
 def test_env_var_overrides_default_location(tmp_path, monkeypatch) -> None:
@@ -139,3 +140,58 @@ def test_config_example_matches_defaults():
 
     path = Path(__file__).resolve().parents[1] / "config.example.json"
     assert load_config(path) == Config()
+
+
+def test_partial_quality_overrides_keep_other_defaults_and_support_bom(tmp_path):
+    path = tmp_path / "config.json"
+    path.write_text(
+        json.dumps({"quality_profiles": {"libx265": {"high": 20}}}), encoding="utf-8-sig"
+    )
+    profiles = load_config(path).quality_profiles
+    assert profiles["libx265"] == QualityLevels(20, 28, 32)
+    assert profiles["hevc_nvenc"] == DEFAULT_QUALITY_PROFILES["hevc_nvenc"]
+    assert Config().quality_profiles["libx265"].high == 24
+    with pytest.raises(TypeError):
+        profiles["libx265"] = QualityLevels(1, 2, 3)
+
+
+@pytest.mark.parametrize(
+    "profiles",
+    [
+        None,
+        [],
+        {"x265": {}},
+        {"libx265": None},
+        {"libx265": []},
+        {"libx265": {"hig": 20}},
+        {"libx265": {"high": True}},
+        {"libx265": {"high": "20"}},
+        {"libx265": {"high": 20.5}},
+        {"libx265": {"high": 28}},
+        {"libx265": {"high": 30}},
+        {"libx265": {"low": 27}},
+        {"libx265": {"medium": None}},
+    ],
+)
+def test_invalid_quality_profiles_report_config_context(tmp_path, profiles):
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"quality_profiles": profiles}))
+    with pytest.raises(SetupError, match="quality_profiles") as error:
+        load_config(path)
+    assert str(path) in str(error.value)
+
+
+@pytest.mark.parametrize("encoder", QUALITY_SPECS)
+@pytest.mark.parametrize("boundary", ["minimum", "maximum"])
+def test_quality_bounds_are_specific_to_actual_encoder(tmp_path, encoder, boundary):
+    spec = QUALITY_SPECS[encoder]
+    level = "high" if boundary == "minimum" else "low"
+    value = getattr(spec, boundary)
+    path = tmp_path / "config.json"
+    payload = {"quality_profiles": {encoder: {level: value}}}
+    path.write_text(json.dumps(payload))
+    assert getattr(load_config(path).quality_profiles[encoder], level) == value
+    payload["quality_profiles"][encoder][level] += -1 if boundary == "minimum" else 1
+    path.write_text(json.dumps(payload))
+    with pytest.raises(SetupError, match=encoder):
+        load_config(path)

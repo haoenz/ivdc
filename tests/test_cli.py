@@ -11,6 +11,7 @@ from typer.testing import CliRunner
 from ivdc import __version__
 from ivdc.cli import app
 from ivdc.exitcodes import EXIT_ENV, EXIT_OK
+from ivdc.quality import Quality
 
 runner = CliRunner()
 
@@ -36,6 +37,7 @@ def test_version_flag() -> None:
         ["opt", "--codec", "h264"],
         ["opt", "--cuda", "full"],
         ["opt", "--workers", "99"],
+        ["opt", "--quality", "ultra"],
         ["dl", "--on-error", "explode"],
     ],
 )
@@ -71,7 +73,7 @@ def test_clean_dry_run_on_untouched_directory_is_ok(tmp_path: Path) -> None:
     assert result.exit_code == EXIT_OK
 
 
-@pytest.mark.parametrize("option", ["--what-if", "--throttle"])
+@pytest.mark.parametrize("option", ["--what-if", "--throttle", "--crf"])
 def test_removed_options_are_not_aliases(option):
     result = runner.invoke(app, ["opt", option])
     assert result.exit_code == 2
@@ -81,3 +83,19 @@ def test_help_exposes_python_options():
     result = runner.invoke(app, ["opt", "--help"])
     assert "--dry-run" in result.stdout
     assert "--workers" in result.stdout
+    assert "--quality" in result.stdout
+    assert "--crf" not in result.stdout
+
+
+@pytest.mark.parametrize("quality", [None, *Quality])
+def test_quality_cli_passes_selected_or_default_level(monkeypatch, quality):
+    received = []
+
+    def execute(options, console):
+        received.append(options)
+        return EXIT_OK
+
+    monkeypatch.setattr("ivdc.cli.execute_optimize", execute)
+    result = runner.invoke(app, ["opt", *(["--quality", quality.value] if quality else [])])
+    assert result.exit_code == EXIT_OK, result.output
+    assert received[0].quality is (quality or Quality.medium)

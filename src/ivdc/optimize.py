@@ -1,11 +1,13 @@
 """压制运行的协调：规划、任务调度、文件事务与结果记录。"""
 
+import logging
 import time
 from collections.abc import Callable
 from concurrent.futures import as_completed
 from dataclasses import dataclass, replace
 from itertools import chain
 
+from ivdc.config import load_config
 from ivdc.encode import resolve_encode_config
 from ivdc.encoding import Encoder, ProgressCallback, SegmentResult
 from ivdc.errors import MediaError, SetupError
@@ -182,6 +184,7 @@ def run_optimize(
     )
     # 在任何恢复或清理之前校验持久化数据。损坏时保留原文件并报告。
     manifest = load_manifest(layout)
+    user_config = load_config()
     with ProcessRunner() as runner:
         toolchain = find_toolchain()
         environment = probe_environment(toolchain, runner)
@@ -191,10 +194,12 @@ def run_optimize(
             encoders_output=environment.encoders,
             hwaccels_output=environment.hwaccels,
             gpu_available=environment.gpu_available,
-            crf=options.crf,
+            quality=options.quality,
+            quality_profiles=user_config.quality_profiles,
         )
         for notice in config.notices:
             events.notice(notice)
+        events.notice(config.quality_description)
         plan = build_plan(options, layout, config, toolchain, runner)
         events.planned(plan, config.codec_name)
         if options.dry_run:
@@ -204,6 +209,7 @@ def run_optimize(
         if not plan.tasks and not plan.recoveries and not plan.temporary_files:
             return OptimizationResult(plan)
         with ResultRecorder(layout, manifest, log_path, options.debug) as recorder:
+            logging.getLogger(__name__).info("%s", config.quality_description)
             recovery = recover_backups(layout)
             for name in recovery.restored:
                 events.notice(f"恢复上次中断的源文件: {name if not options.mask else '已恢复'}")

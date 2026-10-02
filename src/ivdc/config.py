@@ -3,10 +3,12 @@
 import json
 import os
 import sys
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from ivdc.errors import SetupError
+from ivdc.quality import DEFAULT_QUALITY_PROFILES, QualityLevels, parse_quality_profiles
 from ivdc.store import atomic_write_text
 
 CONFIG_ENV_VAR = "IVDC_CONFIG"
@@ -16,6 +18,9 @@ DEFAULT_CONFIG_TEXT = (
         {
             "impersonate_domains": [],
             "impersonate_target": DEFAULT_IMPERSONATE_TARGET,
+            "quality_profiles": {
+                encoder: asdict(levels) for encoder, levels in DEFAULT_QUALITY_PROFILES.items()
+            },
         },
         ensure_ascii=False,
         indent=2,
@@ -28,6 +33,9 @@ DEFAULT_CONFIG_TEXT = (
 class Config:
     impersonate_domains: tuple[str, ...] = ()
     impersonate_target: str = DEFAULT_IMPERSONATE_TARGET
+    quality_profiles: Mapping[str, QualityLevels] = field(
+        default_factory=lambda: DEFAULT_QUALITY_PROFILES
+    )
 
 
 def default_config_path() -> Path:
@@ -55,7 +63,7 @@ def load_config(path: Path | None = None) -> Config:
         payload = json.loads(text)
         if not isinstance(payload, dict):
             raise ValueError("根节点必须是对象")
-        unknown = payload.keys() - {"impersonate_domains", "impersonate_target"}
+        unknown = payload.keys() - {"impersonate_domains", "impersonate_target", "quality_profiles"}
         if unknown:
             raise ValueError(f"未知配置键: {', '.join(sorted(unknown))}；请参阅 MIGRATION.md")
         domains = payload.get("impersonate_domains", [])
@@ -66,7 +74,8 @@ def load_config(path: Path | None = None) -> Config:
         target_name = payload.get("impersonate_target", DEFAULT_IMPERSONATE_TARGET)
         if not isinstance(target_name, str) or not target_name.strip():
             raise ValueError("impersonate_target 必须是非空字符串")
-        return Config(tuple(item.strip() for item in domains), target_name.strip())
+        profiles = parse_quality_profiles(payload.get("quality_profiles", {}))
+        return Config(tuple(item.strip() for item in domains), target_name.strip(), profiles)
     except ValueError as exc:
         raise SetupError(f"配置无效 {target}: {exc}") from exc
 

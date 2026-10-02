@@ -9,6 +9,7 @@ from ivdc.encode import (
     build_ffmpeg_args,
     resolve_encode_config,
 )
+from ivdc.quality import DEFAULT_QUALITY_PROFILES, Quality, parse_quality_profiles
 
 ENCODERS = """
  V..... = Video
@@ -76,7 +77,18 @@ def test_decode_only_uses_hwaccel_without_nvenc() -> None:
 def test_encode_mode_switches_to_nvenc() -> None:
     config = resolve("x265", "encode")
     assert config.use_nvenc is True
-    assert config.encoder_args == ("-c:v", "hevc_nvenc", "-tag:v", "hvc1", "-cq", "28")
+    assert config.encoder_args == (
+        "-c:v",
+        "hevc_nvenc",
+        "-tag:v",
+        "hvc1",
+        "-rc",
+        "vbr",
+        "-cq",
+        "28",
+        "-b:v",
+        "0",
+    )
     assert config.hwaccel_args == ("-hwaccel", "cuda", "-hwaccel_output_format", "cuda")
     assert any("解码 + NVENC 编码" in notice for notice in config.notices)
 
@@ -113,20 +125,64 @@ def test_missing_gpu_disables_hwaccel() -> None:
     assert config.hwaccel_args == ()
 
 
-def test_crf_override_applies_to_software_and_nvenc() -> None:
-    software = resolve("x265", "off", crf=18)
+def test_quality_overrides_follow_actual_encoder() -> None:
+    profiles = parse_quality_profiles({"libx265": {"high": 18}, "hevc_nvenc": {"high": 20}})
+    software = resolve("x265", "off", quality=Quality.high, quality_profiles=profiles)
     assert software.encoder_args[-1] == "18"
-    hardware = resolve("x265", "encode", crf=18)
-    assert hardware.encoder_args[-1] == "18"
-    assert hardware.crf == 18
+    hardware = resolve("x265", "encode", quality=Quality.high, quality_profiles=profiles)
+    assert hardware.encoder_args[hardware.encoder_args.index("-cq") + 1] == "20"
+    assert hardware.quality_value == 20
+    assert hardware.quality_parameter == "cq"
+    assert hardware.encoder == "hevc_nvenc"
+    fallback = resolve(
+        "x265",
+        "encode",
+        quality=Quality.high,
+        quality_profiles=profiles,
+        encoders_output=ENCODERS_NO_NVENC,
+    )
+    assert fallback.encoder == "libx265"
+    assert fallback.quality_value == 18
+    assert fallback.quality_parameter == "crf"
 
 
 @pytest.mark.parametrize("codec", sorted(CODECS))
-def test_default_crf_matches_codec_table(codec: str) -> None:
+def test_default_quality_matches_actual_encoder_profile(codec: str) -> None:
     config = resolve(codec, "off")
     spec = CODECS[codec]
     assert spec.sw_encoder in config.encoder_args
-    assert str(spec.default_crf) in config.encoder_args
+    assert config.quality is Quality.medium
+    assert str(DEFAULT_QUALITY_PROFILES[spec.sw_encoder].medium) in config.encoder_args
+
+
+@pytest.mark.parametrize("quality", list(Quality))
+@pytest.mark.parametrize(
+    ("codec", "cuda", "encoder", "parameter", "values"),
+    [
+        ("x265", "off", "libx265", "crf", (24, 28, 32)),
+        ("av1", "off", "libsvtav1", "crf", (28, 35, 42)),
+        ("vp9", "off", "libvpx-vp9", "crf", (25, 31, 37)),
+        ("x265", "encode", "hevc_nvenc", "cq", (23, 28, 33)),
+        ("av1", "encode", "av1_nvenc", "cq", (25, 30, 35)),
+    ],
+)
+def test_every_quality_maps_to_explicit_encoder_parameter(
+    codec, cuda, encoder, parameter, values, quality
+):
+    config = resolve(codec, cuda, quality=quality)
+    expected = values[list(Quality).index(quality)]
+    assert config.encoder == encoder
+    assert config.quality_value == expected
+    assert config.encoder_args[config.encoder_args.index(f"-{parameter}") + 1] == str(expected)
+    assert f"{parameter.upper()} {expected}" in config.quality_description
+    if parameter == "cq":
+        assert config.encoder_args[config.encoder_args.index("-rc") + 1] == "vbr"
+        assert config.encoder_args[config.encoder_args.index("-b:v") + 1] == "0"
+
+
+def test_unknown_quality_is_rejected():
+    with pytest.raises(ValueError, match="quality"):
+        resolve("x265", "off", quality="ultra")
 
 
 def test_unknown_cuda_mode_raises() -> None:
