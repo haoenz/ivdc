@@ -294,6 +294,7 @@ def test_audio_before_video_keeps_original_stream_order(
     ffmpeg("-i", source, "-map", "0:a", "-map", "0:v", "-map", "0:s", "-c", "copy", reordered)
     signature = stream_signature(reordered)
     packets = sorted(nonvideo_packets(reordered))
+    video = probe(reordered, "-select_streams", "v:0", "-show_streams", "-show_packets")
     assert signature[0][0] == "audio"
     console, output = console_pair
     assert execute_optimize(options(reordered, segment_minutes, monkeypatch), console) == EXIT_OK, (
@@ -301,6 +302,13 @@ def test_audio_before_video_keeps_original_stream_order(
     )
     assert stream_signature(reordered) == signature
     assert sorted(nonvideo_packets(reordered)) == packets
+    encoded = probe(reordered, "-select_streams", "v:0", "-show_streams", "-show_packets")
+    # FFmpeg 6 的默认帧同步模式曾将 30 帧补为 30720 帧；同时检查播放时间戳。
+    for field in ("avg_frame_rate", "nb_frames", "duration"):
+        assert encoded["streams"][0][field] == video["streams"][0][field]
+    assert sorted(p["pts_time"] for p in encoded["packets"]) == sorted(
+        p["pts_time"] for p in video["packets"]
+    )
 
 
 def test_additional_video_fails_before_encoding(tmp_path, monkeypatch, console_pair):

@@ -274,6 +274,8 @@ def build_ffmpeg_args(
     args += list(config.encoder_args)
     if not video_only:
         # 默认编码 time base 会把非整帧的音画偏移取整，整片保留输入时间精度。
-        args += ["-enc_time_base:v", "demux"]
+        # 显式透传帧时间戳：FFmpeg 6 的 auto 模式在音频流排首位时会选择 CFR，
+        # 配合 demux time base 会按其倒数大量补帧。
+        args += ["-enc_time_base:v", "demux", "-fps_mode:v", "passthrough"]
     args += ["-f", "mp4", target, "-y"]
     return args
