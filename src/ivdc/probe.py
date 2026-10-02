@@ -40,6 +40,21 @@ class MediaInfo:
     nominal_frame_rate: float = 0.0
     frame_count: int = 0
     streams: tuple[MediaStream, ...] = ()
+    start_time: float = 0.0
+    video_start_time: float = 0.0
+
+    @property
+    def video_offset(self) -> float:
+        """视频相对输入容器零点的偏移；seek 和拼接必须使用同一基准。"""
+        return self.video_start_time - self.start_time
+
+
+def _timestamp(value: object) -> float:
+    try:
+        number = float(str(value))
+    except ValueError, OverflowError:
+        return 0.0
+    return number if math.isfinite(number) else 0.0
 
 
 def _positive_number(value: object) -> float:
@@ -123,5 +138,9 @@ def parse_media_info(payload: dict[str, object]) -> MediaInfo:
                 nominal_frame_rate=_positive_number(stream.get("r_frame_rate")),
                 frame_count=int(_positive_number(stream.get("nb_frames"))),
                 streams=tuple(details),
+                start_time=_timestamp(format_info.get("start_time"))
+                if isinstance(format_info, dict)
+                else 0.0,
+                video_start_time=_timestamp(stream.get("start_time")),
             )
     return MediaInfo(duration=duration, codec_name="", stream_types=kinds, streams=tuple(details))

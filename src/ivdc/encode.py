@@ -272,5 +272,8 @@ def build_ffmpeg_args(
     else:
         args += preserve_stream_args(media)
     args += list(config.encoder_args)
+    if not video_only:
+        # 默认编码 time base 会把非整帧的音画偏移取整，整片保留输入时间精度。
+        args += ["-enc_time_base:v", "demux"]
     args += ["-f", "mp4", target, "-y"]
     return args
