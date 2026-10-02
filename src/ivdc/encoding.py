@@ -9,7 +9,7 @@ from pathlib import Path
 from ivdc.encode import EncodingConfig, build_ffmpeg_args, preserve_stream_args
 from ivdc.errors import MediaError
 from ivdc.fs import CONCAT_LIST_NAME, IvdcLayout, concat_lines
-from ivdc.media_validation import validate_media, validate_streams
+from ivdc.media_validation import validate_media
 from ivdc.optimization_plan import VideoTask
 from ivdc.parse import is_progress_line, parse_out_time, parse_progress_line
 from ivdc.plan import Segment
@@ -92,9 +92,7 @@ class Encoder:
         if not target.is_file() or target.stat().st_size == 0:
             raise MediaError("ffmpeg 未生成目标文件")
         if segment is None:
-            validate_streams(
-                reference, probe_media(self.toolchain, target, self.runner), self.config.codec_name
-            )
+            self.validate(task, target, reference.video_duration)
 
     def validate(
         self,

@@ -196,6 +196,9 @@ def test_build_ffmpeg_args_full_file() -> None:
     assert args == [
         "-v",
         "error",
+        "-xerror",
+        "-err_detect",
+        "explode",
         "-progress",
         "-",
         "-i",
@@ -227,6 +230,9 @@ def test_build_ffmpeg_args_segment_places_ss_before_input() -> None:
     assert args == [
         "-v",
         "error",
+        "-xerror",
+        "-err_detect",
+        "explode",
         "-progress",
         "-",
         "-ss",
@@ -259,9 +265,12 @@ def test_build_ffmpeg_args_segment_places_ss_before_input() -> None:
 def test_build_ffmpeg_args_keeps_ss_before_hwaccel() -> None:
     config = resolve("x265", "encode")
     args = build_ffmpeg_args(config, "in.mp4", "out.mp4", start=90.0)
-    assert args[:12] == [
+    assert args[:15] == [
         "-v",
         "error",
+        "-xerror",
+        "-err_detect",
+        "explode",
         "-progress",
         "-",
         "-ss",

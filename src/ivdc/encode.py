@@ -257,7 +257,8 @@ def build_ffmpeg_args(
     参数顺序有语义，不能重排：``-ss`` 必须出现在 ``-i`` 之前（输入级定位）且避开
     硬件加速参数，``-t`` 必须出现在 ``-i`` 之后（输出级截断），编码参数紧随其后。
     """
-    args = ["-v", "error"]
+    # 解码错误不能被 ffmpeg 的默认容错行为转成“成功但缺帧”的结果。
+    args = ["-v", "error", "-xerror", "-err_detect", "explode"]
     if progress:
         args += ["-progress", "-"]
     if start is not None:
