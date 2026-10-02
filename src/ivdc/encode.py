@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ivdc.errors import SetupError
-from ivdc.probe import has_cuda_hwaccel, has_encoder
+from ivdc.probe import MediaInfo, has_cuda_hwaccel, has_encoder
 
 __all__ = [
     "CODECS",
@@ -18,6 +18,7 @@ __all__ = [
     "EncodingConfig",
     "build_ffmpeg_args",
     "resolve_encode_config",
+    "preserve_stream_args",
 ]
 
 
@@ -166,6 +167,38 @@ def _number(value: float) -> str:
     return f"{value:.6f}".rstrip("0").rstrip(".")
 
 
+def preserve_stream_args(
+    media: MediaInfo | None, *, original_input: int = 0, video_input: int = 0
+) -> list[str]:
+    """按源顺序映射所有流；分片成片的视频来自拼接输入，其余流直接来自原文件。"""
+    args: list[str] = []
+    if media is None or not media.streams:
+        args += ["-map", str(original_input)]
+    else:
+        for output_index, stream in enumerate(media.streams):
+            source = (
+                f"{video_input}:v:0"
+                if stream.kind == "video"
+                else f"{original_input}:{stream.index}"
+            )
+            args += [
+                "-map",
+                source,
+                f"-map_metadata:s:{output_index}",
+                f"{original_input}:s:{stream.index}",
+                f"-disposition:{output_index}",
+                "+".join(stream.dispositions) or "0",
+            ]
+    return args + [
+        "-map_metadata",
+        str(original_input),
+        "-map_chapters",
+        str(original_input),
+        "-c",
+        "copy",
+    ]
+
+
 def build_ffmpeg_args(
     config: EncodingConfig,
     source: str,
@@ -174,6 +207,8 @@ def build_ffmpeg_args(
     start: float | None = None,
     duration: float | None = None,
     progress: bool = True,
+    media: MediaInfo | None = None,
+    video_only: bool = False,
 ) -> list[str]:
     """装配一次 ffmpeg 调用的参数列表。
 
@@ -189,6 +224,10 @@ def build_ffmpeg_args(
     args += ["-i", source]
     if duration is not None:
         args += ["-t", _number(duration)]
+    if video_only:
+        args += ["-map", "0:v:0", "-map_metadata", "-1", "-map_chapters", "-1"]
+    else:
+        args += preserve_stream_args(media)
     args += list(config.encoder_args)
     args += ["-f", "mp4", target, "-y"]
     return args

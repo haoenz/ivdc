@@ -1,8 +1,32 @@
 """完成凭据绑定文件内容、任务身份和分片索引。"""
 
+import json
 import os
 
-from ivdc.segment_state import SegmentContext
+from ivdc.encode import EncodingConfig
+from ivdc.fs import IvdcLayout
+from ivdc.optimization_plan import VideoTask
+from ivdc.plan import Segment
+from ivdc.segment_state import SegmentContext, prepare_segments
+
+
+def test_previous_stream_policy_archives_segments_without_deleting_them(tmp_path):
+    source = tmp_path / "video.mp4"
+    source.write_bytes(b"original")
+    layout = IvdcLayout(tmp_path)
+    task = VideoTask(source.name, source, source.name, 1, (Segment(0, 0, 1),))
+    config = EncodingConfig("x265", "hevc")
+    prepare_segments(layout, config, task)
+    metadata = layout.seg_dir(source.name) / "resume.json"
+    previous = json.loads(metadata.read_text())
+    del previous["stream_policy"]
+    metadata.write_text(json.dumps(previous))
+    layout.seg(source.name, 0).write_bytes(b"old segment")
+    prepare_segments(layout, config, task)
+    archived = list(layout.seg_dir(source.name).parent.glob("*.resume-*/seg_000.mp4"))
+    assert len(archived) == 1
+    assert archived[0].read_bytes() == b"old segment"
+    assert not layout.seg(source.name, 0).exists()
 
 
 def test_same_size_and_timestamp_modification_invalidates_receipt(tmp_path):

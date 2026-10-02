@@ -83,7 +83,12 @@ def prepare_segments(layout: IvdcLayout, config: EncodingConfig, task: VideoTask
         "encoder_args": list(config.encoder_args),
         "segments": [[part.start, part.duration] for part in task.segments],
     }
-    metadata = {**legacy_metadata, "version": 2, "hwaccel_args": list(config.hwaccel_args)}
+    metadata = {
+        **legacy_metadata,
+        "version": 2,
+        "hwaccel_args": list(config.hwaccel_args),
+        "stream_policy": "video_segments_original_tracks_v1",
+    }
     legacy = not metadata_path.exists()
     if not legacy:
         try:

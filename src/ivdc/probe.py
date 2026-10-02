@@ -11,7 +11,18 @@ import re
 from dataclasses import dataclass
 from fractions import Fraction
 
-__all__ = ["MediaInfo", "has_cuda_hwaccel", "has_encoder", "parse_media_info"]
+__all__ = ["MediaInfo", "MediaStream", "has_cuda_hwaccel", "has_encoder", "parse_media_info"]
+
+
+@dataclass(frozen=True)
+class MediaStream:
+    index: int
+    kind: str
+    codec: str
+    language: str = "und"
+    dispositions: tuple[str, ...] = ()
+    channels: int = 0
+    sample_rate: int = 0
 
 
 @dataclass(frozen=True)
@@ -28,6 +39,7 @@ class MediaInfo:
     stream_types: tuple[str, ...] = ()
     nominal_frame_rate: float = 0.0
     frame_count: int = 0
+    streams: tuple[MediaStream, ...] = ()
 
 
 def _positive_number(value: object) -> float:
@@ -78,6 +90,24 @@ def parse_media_info(payload: dict[str, object]) -> MediaInfo:
         [item for item in streams if isinstance(item, dict)] if isinstance(streams, list) else []
     )
     kinds = tuple(sorted(str(item.get("codec_type", "")) for item in streams))
+    details: list[MediaStream] = []
+    for index, stream in enumerate(streams):
+        tags = stream.get("tags")
+        dispositions = stream.get("disposition")
+        stream_index = stream.get("index", index)
+        details.append(
+            MediaStream(
+                index=stream_index if type(stream_index) is int else index,
+                kind=str(stream.get("codec_type") or ""),
+                codec=str(stream.get("codec_name") or ""),
+                language=str(tags.get("language") or "und") if isinstance(tags, dict) else "und",
+                dispositions=tuple(sorted(key for key, value in dispositions.items() if value == 1))
+                if isinstance(dispositions, dict)
+                else (),
+                channels=int(_positive_number(stream.get("channels"))),
+                sample_rate=int(_positive_number(stream.get("sample_rate"))),
+            )
+        )
     for stream in streams:
         if stream.get("codec_type") == "video":
             width, height = stream.get("width"), stream.get("height")
@@ -92,5 +122,6 @@ def parse_media_info(payload: dict[str, object]) -> MediaInfo:
                 stream_types=kinds,
                 nominal_frame_rate=_positive_number(stream.get("r_frame_rate")),
                 frame_count=int(_positive_number(stream.get("nb_frames"))),
+                streams=tuple(details),
             )
-    return MediaInfo(duration=duration, codec_name="", stream_types=kinds)
+    return MediaInfo(duration=duration, codec_name="", stream_types=kinds, streams=tuple(details))

@@ -6,10 +6,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from ivdc.encode import EncodingConfig, build_ffmpeg_args
+from ivdc.encode import EncodingConfig, build_ffmpeg_args, preserve_stream_args
 from ivdc.errors import MediaError
 from ivdc.fs import CONCAT_LIST_NAME, IvdcLayout, concat_lines
-from ivdc.media_validation import validate_media
+from ivdc.media_validation import validate_media, validate_streams
 from ivdc.optimization_plan import VideoTask
 from ivdc.parse import is_progress_line, parse_out_time, parse_progress_line
 from ivdc.plan import Segment
@@ -30,7 +30,8 @@ def failure_reason(result: CommandResult) -> str:
         for line in (*result.lines, *result.stderr.splitlines())
         if line.strip() and not is_progress_line(line)
     ]
-    return " ".join(messages[-2:]) or f"ffmpeg 退出码 {result.returncode}"
+    # stream 已限制诊断缓冲大小；再次只截末尾会丢掉容器不支持某条流的根因。
+    return " ".join(messages) or f"ffmpeg 退出码 {result.returncode}"
 
 
 @dataclass(frozen=True)
@@ -60,6 +61,7 @@ class Encoder:
     def encode(self, task: VideoTask, target: Path, segment: Segment | None = None) -> None:
         key = (task.name, None if segment is None else segment.index)
         duration = task.duration if segment is None else segment.duration
+        reference = task.media or probe_media(self.toolchain, task.path, self.runner)
         argv = [
             self.toolchain.ffmpeg,
             "-hide_banner",
@@ -69,7 +71,9 @@ class Encoder:
                 str(task.path),
                 str(target),
                 start=segment.start if segment else None,
-                duration=duration if duration > 0 else None,
+                duration=duration if segment is not None else None,
+                media=reference,
+                video_only=segment is not None,
             ),
         ]
         if segment:
@@ -87,6 +91,10 @@ class Encoder:
             raise MediaError(failure_reason(result))
         if not target.is_file() or target.stat().st_size == 0:
             raise MediaError("ffmpeg 未生成目标文件")
+        if segment is None:
+            validate_streams(
+                reference, probe_media(self.toolchain, target, self.runner), self.config.codec_name
+            )
 
     def validate(
         self,
@@ -96,6 +104,7 @@ class Encoder:
         *,
         decode: bool = True,
         start: float = 0.0,
+        video_only: bool = False,
     ) -> None:
         reference = task.media or probe_media(self.toolchain, task.path, self.runner)
         validate_media(
@@ -107,6 +116,7 @@ class Encoder:
             duration,
             decode=decode,
             start=start,
+            video_only=video_only,
         )
 
     def segment(self, task: VideoTask, part: Segment, context: SegmentContext) -> SegmentResult:
@@ -120,7 +130,12 @@ class Encoder:
                 if completed or part.index in context.legacy_indices:
                     try:
                         self.validate(
-                            task, target, part.duration, decode=not completed, start=part.start
+                            task,
+                            target,
+                            part.duration,
+                            decode=not completed,
+                            start=part.start,
+                            video_only=True,
                         )
                     except MediaError:
                         pass  # 不能确认完整的旧分片先归档；命令启动失败向外传播。
@@ -130,7 +145,7 @@ class Encoder:
             if target.exists():
                 archive_files(target)
             self.encode(task, temporary, part)
-            self.validate(task, temporary, part.duration, start=part.start)
+            self.validate(task, temporary, part.duration, start=part.start, video_only=True)
             self.runner.check_cancelled()
             self.progress((task.name, part.index), part.duration)
             ready = True
@@ -152,6 +167,7 @@ class Encoder:
             raise MediaError(f"部分分片缺失或失败: {errors}")
         list_path = self.layout.seg_dir(task.name) / CONCAT_LIST_NAME
         write_lines(list_path, concat_lines(len(task.segments)))
+        reference = task.media or probe_media(self.toolchain, task.path, self.runner)
         result = self.runner.capture(
             [
                 self.toolchain.ffmpeg,
@@ -165,8 +181,9 @@ class Encoder:
                 "0",
                 "-i",
                 list_path,
-                "-c",
-                "copy",
+                "-i",
+                task.path,
+                *preserve_stream_args(reference, original_input=1, video_input=0),
                 "-f",
                 "mp4",
                 target,

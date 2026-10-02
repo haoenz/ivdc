@@ -5,10 +5,33 @@ from dataclasses import replace
 import pytest
 
 from ivdc.errors import MediaError
-from ivdc.media_validation import expected_frames, validate_media
-from ivdc.probe import MediaInfo
+from ivdc.media_validation import expected_frames, validate_media, validate_streams
+from ivdc.probe import MediaInfo, MediaStream
 from ivdc.probe_runtime import Toolchain
 from ivdc.runner import ProcessRunner
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"language": "zho"},
+        {"dispositions": ()},
+        {"channels": 1},
+        {"sample_rate": 48000},
+        {"codec": "mp3"},
+    ],
+)
+def test_same_stream_count_cannot_hide_changed_audio(change):
+    video = MediaStream(0, "video", "h264")
+    audio = MediaStream(1, "audio", "aac", "eng", ("default",), 2, 44100)
+    reference = MediaInfo(1, "h264", stream_types=("audio", "video"), streams=(video, audio))
+    output = replace(
+        reference,
+        codec_name="hevc",
+        streams=(replace(video, codec="hevc"), replace(audio, **change)),
+    )
+    with pytest.raises(MediaError):
+        validate_streams(reference, output, "hevc")
 
 
 @pytest.mark.parametrize(

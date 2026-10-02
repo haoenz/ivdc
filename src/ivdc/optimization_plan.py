@@ -100,8 +100,14 @@ def build_plan(
             continue
         segments: tuple[Segment, ...] = ()
         error = ""
+        if (
+            info.stream_types.count("video") != 1
+            or any(kind not in ("video", "audio", "subtitle") for kind in info.stream_types)
+            or any("attached_pic" in stream.dispositions for stream in info.streams)
+        ):
+            error = "仅支持单视频流及音轨、字幕；额外视频、封面、数据或附件流无法安全保留"
         duration = info.duration
-        if options.segment_minutes:
+        if options.segment_minutes and not error:
             duration = info.video_duration or info.duration
             try:
                 segments = tuple(
