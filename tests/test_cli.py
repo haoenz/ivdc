@@ -40,6 +40,8 @@ def test_version_flag() -> None:
         ["opt", "--cuda", "full"],
         ["opt", "--workers", "99"],
         ["opt", "--quality", "ultra"],
+        ["opt", "--tail-tolerance", "-0.1"],
+        ["opt", "--tail-tolerance", "1.1"],
         ["dl", "--on-error", "explode"],
     ],
 )
@@ -104,3 +106,17 @@ def test_quality_cli_passes_selected_or_default_level(monkeypatch, quality):
     result = runner.invoke(app, ["opt", *(["--quality", quality.value] if quality else [])])
     assert result.exit_code == EXIT_OK, result.output
     assert received[0].quality is (quality or Quality.medium)
+
+
+@pytest.mark.parametrize("value", [None, "0", "0.1", "0.2"])
+def test_tail_tolerance_default_and_overrides_are_forwarded(monkeypatch, value):
+    received = []
+
+    def execute(options, console):
+        received.append(options)
+        return EXIT_OK
+
+    monkeypatch.setattr("ivdc.cli.execute_optimize", execute)
+    result = runner.invoke(app, ["opt", *(["--tail-tolerance", value] if value else [])])
+    assert result.exit_code == EXIT_OK, result.output
+    assert received[0].tail_tolerance == (float(value) if value else 0.2)

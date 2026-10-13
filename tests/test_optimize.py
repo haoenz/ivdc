@@ -20,6 +20,8 @@ from ivdc.cli import execute_optimize
 from ivdc.exitcodes import EXIT_ENV, EXIT_FAILURE, EXIT_OK
 from ivdc.fs import IvdcLayout
 from ivdc.optimization_plan import OptimizeOptions, collect_files
+from ivdc.optimize import run_optimize
+from ivdc.store import load_manifest
 
 FFMPEG = shutil.which("ffmpeg")
 FFPROBE = shutil.which("ffprobe")
@@ -152,6 +154,61 @@ def test_whole_file_encode_keeps_name_location_and_backup(
     assert not layout.tmp(SAMPLE).exists()
     # 工作目录里只有成片，没有中间产物
     assert sorted(item.name for item in videos.iterdir()) == [".ivdc", SAMPLE]
+
+
+def test_moved_success_is_not_restored_in_preview_or_execution(sample, videos):
+    assert not run_optimize(_options(videos)).failed
+    layout = IvdcLayout(videos)
+    record = load_manifest(layout).get(SAMPLE)
+    original = layout.backup(SAMPLE).read_bytes()
+    success = videos / "success"
+    success.mkdir()
+    moved = sample.replace(success / SAMPLE)
+    finished = moved.read_bytes()
+
+    # 已完成文件全部移走时，预演与执行都应无事可做，也不改写状态。
+    def snapshot():
+        return {p.relative_to(videos): p.read_bytes() for p in videos.rglob("*") if p.is_file()}
+
+    before = snapshot()
+    for dry_run in (True, False):
+        result = run_optimize(_options(videos, dry_run=dry_run))
+        assert result.plan.tasks == ()
+        assert result.plan.recoveries == ()
+        assert result.records == ()
+        assert not result.failed
+        assert snapshot() == before
+
+    # 混有待处理文件时，也只处理该文件，保留移走的成片及其成功记录。
+    pending = videos / "pending.mp4"
+    _make_video(pending, 1)
+    before = snapshot()
+    preview = run_optimize(_options(videos, dry_run=True))
+    assert [task.name for task in preview.plan.tasks] == [pending.name]
+    assert preview.plan.recoveries == ()
+    assert snapshot() == before
+
+    result = run_optimize(_options(videos))
+    assert not result.failed
+    assert [record.name for record in result.records] == [pending.name]
+    assert result.plan.recoveries == ()
+    assert _codec(pending) == "hevc"
+    assert not sample.exists()
+    assert moved.read_bytes() == finished
+    assert layout.backup(SAMPLE).read_bytes() == original
+    assert load_manifest(layout).get(SAMPLE) == record
+
+
+def test_success_record_does_not_skip_reintroduced_source(sample, videos):
+    assert not run_optimize(_options(videos)).failed
+    layout = IvdcLayout(videos)
+    shutil.copyfile(layout.backup(SAMPLE), sample)
+
+    result = run_optimize(_options(videos, dry_run=True))
+
+    assert [task.name for task in result.plan.tasks] == [SAMPLE]
+    assert result.plan.recoveries == ()
+    assert _codec(sample) == "h264"
 
 
 def test_log_and_manifest_are_written(

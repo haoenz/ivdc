@@ -7,7 +7,8 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ivdc.fs import IvdcLayout
+from ivdc.fs import IvdcLayout, Manifest
+from ivdc.store import load_manifest
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,10 @@ def discard_file(path: Path) -> None:
         logger.warning("未能清理 %s: %s", path, exc)
 
 
-def pending_backups(layout: IvdcLayout) -> dict[str, Path]:
+def pending_backups(layout: IvdcLayout, manifest: Manifest | None = None) -> dict[str, Path]:
+    """仅恢复未完成任务；已成功的成片被移动、改名或删除后不自动还原。"""
+    if manifest is None:
+        manifest = load_manifest(layout)
     return {
         path.relative_to(layout.backups_dir).as_posix(): path
         for path in sorted(layout.backups_dir.rglob("*"))
@@ -42,6 +46,7 @@ def pending_backups(layout: IvdcLayout) -> dict[str, Path]:
         and not path.is_symlink()
         and not (path.name.startswith(".ivdc-copy-") and path.name.endswith(".tmp"))
         and not (layout.root / path.relative_to(layout.backups_dir)).exists()
+        and not manifest.is_done(path.relative_to(layout.backups_dir).as_posix())
     }
 
 
@@ -51,9 +56,9 @@ class RecoveryReport:
     failures: list[str] = field(default_factory=list)
 
 
-def recover_backups(layout: IvdcLayout) -> RecoveryReport:
+def recover_backups(layout: IvdcLayout, manifest: Manifest | None = None) -> RecoveryReport:
     report = RecoveryReport()
-    for name, backup in pending_backups(layout).items():
+    for name, backup in pending_backups(layout, manifest).items():
         try:
             atomic_copy(backup, layout.root / name)
         except OSError as exc:

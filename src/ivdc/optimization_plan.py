@@ -5,7 +5,7 @@ from pathlib import Path
 
 from ivdc.encode import EncodingConfig
 from ivdc.errors import MediaError, SetupError
-from ivdc.fs import STATE_DIR_NAME, IvdcLayout
+from ivdc.fs import STATE_DIR_NAME, IvdcLayout, Manifest
 from ivdc.naming import new_tag
 from ivdc.plan import Segment, plan_segments
 from ivdc.probe import MediaInfo
@@ -19,6 +19,7 @@ DEFAULT_CODEC = "x265"
 DEFAULT_CUDA = "decode"
 DEFAULT_WORKERS = 2
 DEFAULT_SEGMENT_MINUTES = 0
+DEFAULT_TAIL_TOLERANCE = 0.2
 
 
 @dataclass(frozen=True)
@@ -35,12 +36,15 @@ class OptimizeOptions:
     mask: bool = False
     debug: bool = False
     dry_run: bool = False
+    tail_tolerance: float = DEFAULT_TAIL_TOLERANCE
 
     def __post_init__(self) -> None:
         if not 1 <= self.workers <= 64 or not 0 <= self.segment_minutes <= 1440:
             raise SetupError("workers 必须在 1–64 内，segment_minutes 必须在 0–1440 内")
         if self.quality not in Quality:
             raise SetupError("quality 必须是 high、medium 或 low")
+        if not 0 <= self.tail_tolerance <= 1:
+            raise SetupError("tail-tolerance 必须为 0–1 秒，0 表示严格校验")
 
 
 @dataclass(frozen=True)
@@ -78,12 +82,14 @@ def build_plan(
     config: EncodingConfig,
     toolchain: Toolchain,
     runner: ProcessRunner,
+    *,
+    manifest: Manifest | None = None,
 ) -> OptimizationPlan:
     candidates = {
         path.relative_to(layout.root).as_posix(): path
         for path in collect_files(layout.root, options.pattern)
     }
-    recoveries = pending_backups(layout)
+    recoveries = pending_backups(layout, manifest)
     for name, backup in recoveries.items():
         if Path(name).full_match(options.pattern):
             candidates[name] = backup

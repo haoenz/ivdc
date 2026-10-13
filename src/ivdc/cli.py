@@ -24,6 +24,7 @@ from ivdc.exitcodes import EXIT_ENV, EXIT_FAILURE, EXIT_OK
 from ivdc.optimization_plan import (
     DEFAULT_PATTERN,
     DEFAULT_SEGMENT_MINUTES,
+    DEFAULT_TAIL_TOLERANCE,
     DEFAULT_WORKERS,
     OptimizeOptions,
 )
@@ -96,6 +97,15 @@ def opt(
     segments: Annotated[
         int, typer.Option("--segments", min=0, max=1440, help="分片时长（分钟），0 表示整片编码")
     ] = DEFAULT_SEGMENT_MINUTES,
+    tail_tolerance: Annotated[
+        float,
+        typer.Option(
+            "--tail-tolerance",
+            min=0,
+            max=1,
+            help="整片末尾时长容差（秒）；0 为严格校验，仍检查全部帧与时间戳",
+        ),
+    ] = DEFAULT_TAIL_TOLERANCE,
     log: Annotated[
         Path | None,
         typer.Option(
@@ -126,6 +136,7 @@ def opt(
             quality=quality,
             workers=workers,
             segment_minutes=segments,
+            tail_tolerance=tail_tolerance,
             log_file=log,
             keep_backup=keep_backup,
             mask=mask,

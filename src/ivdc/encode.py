@@ -86,6 +86,8 @@ CODECS: dict[str, CodecSpec] = {
 }
 
 CUDA_MODES = ("off", "decode", "encode")
+# MP4 默认 movie timescale 为 1000，会将 edit list 中的音画偏移舍入到毫秒。
+MP4_TIMING_ARGS = ("-movie_timescale", "1000000")
 
 
 @dataclass(frozen=True)
@@ -277,5 +279,6 @@ def build_ffmpeg_args(
         # 显式透传帧时间戳：FFmpeg 6 的 auto 模式在音频流排首位时会选择 CFR，
         # 配合 demux time base 会按其倒数大量补帧。
         args += ["-enc_time_base:v", "demux", "-fps_mode:v", "passthrough"]
+    args += MP4_TIMING_ARGS
     args += ["-f", "mp4", target, "-y"]
     return args

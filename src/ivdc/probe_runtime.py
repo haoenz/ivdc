@@ -2,6 +2,7 @@
 
 import json
 import logging
+import math
 import os
 import shutil
 from collections.abc import Sequence
@@ -32,6 +33,65 @@ class Environment:
     encoders: str
     hwaccels: str
     gpu_available: bool
+
+
+@dataclass(frozen=True)
+class VideoTimeline:
+    timestamps: tuple[float, ...]
+    last_duration: float | None
+
+
+def probe_video_timeline(toolchain: Toolchain, path: Path, runner: ProcessRunner) -> VideoTimeline:
+    """解码实际显示帧，避免 MP4 的时长字段、预滚包和平均帧率影响完整性判断。"""
+    timestamps: list[float] = []
+    last_timestamp, last_duration = -math.inf, math.nan
+
+    def on_frame(line: str) -> None:
+        nonlocal last_timestamp, last_duration
+        if not line.strip():
+            return
+        fields = dict(item.split("=", 1) for item in line.split("|") if "=" in item)
+        try:
+            timestamp = float(fields["pts_time"])
+            if not math.isfinite(timestamp):
+                raise ValueError("无效帧时间戳")
+        except (KeyError, ValueError) as exc:
+            raise MediaError(f"无法读取视频帧时间戳: {path}: {line}") from exc
+        timestamps.append(timestamp)
+        if timestamp >= last_timestamp:
+            last_timestamp = timestamp
+            # FFmpeg 6 使用 pkt_duration_time，新版本使用 duration_time。
+            value = fields.get("duration_time", fields.get("pkt_duration_time", "N/A"))
+            try:
+                last_duration = float(value)
+            except ValueError:
+                last_duration = math.nan
+
+    result = runner.stream(
+        [
+            toolchain.ffprobe,
+            "-v",
+            "error",
+            "-err_detect",
+            "explode",
+            "-select_streams",
+            "v:0",
+            "-show_frames",
+            "-show_entries",
+            "frame=pts_time,duration_time,pkt_duration_time:frame_side_data=",
+            "-of",
+            "compact=p=0",
+            path,
+        ],
+        on_output=on_frame,
+    )
+    if not result.ok or not timestamps:
+        raise MediaError(f"无法解码视频时间轴: {path}")
+    # 末帧时长缺失并不代表末帧或时间戳缺失；由校验策略决定是否可接受。
+    return VideoTimeline(
+        tuple(sorted(timestamps)),
+        last_duration if math.isfinite(last_duration) and last_duration > 0 else None,
+    )
 
 
 def find_toolchain() -> Toolchain:

@@ -6,8 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from ivdc.fs import IvdcLayout
-from ivdc.recovery import recover_backups
+from ivdc.errors import StorageError
+from ivdc.fs import STATUS_FAILED, STATUS_OK, FileRecord, IvdcLayout, Manifest
+from ivdc.recovery import pending_backups, recover_backups
+from ivdc.store import save_manifest
 
 
 @pytest.fixture
@@ -65,6 +67,40 @@ def test_recover_backups_leaves_finished_files_alone(layout: IvdcLayout) -> None
 
 def test_recover_backups_without_state_dir_is_a_noop(layout: IvdcLayout) -> None:
     assert recover_backups(layout).restored == []
+
+
+@pytest.mark.parametrize("name", ["a.mp4", "子目录/a.mp4"])
+@pytest.mark.parametrize("status", [STATUS_OK, STATUS_FAILED, None])
+def test_missing_source_recovery_respects_latest_record(layout, name, status):
+    backup = layout.backup(name)
+    backup.parent.mkdir(parents=True)
+    backup.write_bytes(b"original")
+    manifest = Manifest()
+    if status is not None:
+        manifest.record(FileRecord(name, STATUS_OK))
+        manifest.record(FileRecord(name, status))
+    save_manifest(layout, manifest)
+
+    expected = [] if status == STATUS_OK else [name]
+    assert list(pending_backups(layout)) == expected
+    report = recover_backups(layout)
+
+    assert report.restored == expected
+    assert report.failures == []
+    assert (layout.root / name).exists() == (status != STATUS_OK)
+    assert backup.read_bytes() == b"original"
+
+
+def test_corrupt_manifest_does_not_restore_backups(layout):
+    layout.backups_dir.mkdir(parents=True)
+    layout.backup("a.mp4").write_bytes(b"original")
+    layout.manifest_path.write_text("{broken", encoding="utf-8")
+
+    with pytest.raises(StorageError):
+        recover_backups(layout)
+
+    assert not (layout.root / "a.mp4").exists()
+    assert layout.backup("a.mp4").read_bytes() == b"original"
 
 
 def test_restore_failure_is_recorded_not_swallowed(layout: IvdcLayout, monkeypatch) -> None:

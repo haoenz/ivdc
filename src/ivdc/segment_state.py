@@ -8,7 +8,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
-from ivdc.encode import EncodingConfig
+from ivdc.encode import MP4_TIMING_ARGS, EncodingConfig
 from ivdc.errors import MediaError, StorageError
 from ivdc.fs import IvdcLayout
 from ivdc.optimization_plan import VideoTask
@@ -90,6 +90,7 @@ def prepare_segments(layout: IvdcLayout, config: EncodingConfig, task: VideoTask
         "stream_policy": "video_segments_original_tracks_v2",
         "video_offset": task.media.video_offset if task.media else 0.0,
         "display_policy": "autorotate_pixels_v1",
+        "muxer_args": list(MP4_TIMING_ARGS),
     }
     # 无版本号的元数据也必须明确匹配任务身份，才能校验并复用分片。
     legacy = False

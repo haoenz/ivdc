@@ -174,16 +174,16 @@ def run_optimize(
         raise SetupError(f"路径不存在或不是目录: {root}")
     layout = IvdcLayout(root)
     validate_state_directory(layout)
+    # 规划和实际恢复共用同一份已校验记录，避免将成功后移走的成片视为中断任务。
+    manifest = load_manifest(layout)
     log_path = validate_log_path(
         layout,
         resolve_log_path(layout, options.log_file),
         chain(
             collect_files(root, options.pattern),
-            (root / name for name in pending_backups(layout)),
+            (root / name for name in pending_backups(layout, manifest)),
         ),
     )
-    # 在任何恢复或清理之前校验持久化数据。损坏时保留原文件并报告。
-    manifest = load_manifest(layout)
     user_config = load_config()
     with ProcessRunner() as runner:
         toolchain = find_toolchain()
@@ -200,7 +200,7 @@ def run_optimize(
         for notice in config.notices:
             events.notice(notice)
         events.notice(config.quality_description)
-        plan = build_plan(options, layout, config, toolchain, runner)
+        plan = build_plan(options, layout, config, toolchain, runner, manifest=manifest)
         events.planned(plan, config.codec_name)
         if options.dry_run:
             return OptimizationResult(
@@ -210,7 +210,7 @@ def run_optimize(
             return OptimizationResult(plan)
         with ResultRecorder(layout, manifest, log_path, options.debug) as recorder:
             logging.getLogger(__name__).info("%s", config.quality_description)
-            recovery = recover_backups(layout)
+            recovery = recover_backups(layout, manifest)
             for name in recovery.restored:
                 events.notice(f"恢复上次中断的源文件: {name if not options.mask else '已恢复'}")
             for error in recovery.failures:
@@ -219,6 +219,15 @@ def run_optimize(
             failures = list(recovery.failures)
             if cleared.failed:
                 failures.append(f"{cleared.failed} 个临时文件未能删除")
-            encoder = Encoder(toolchain, config, runner, layout, events.progress)
+            if options.tail_tolerance:
+                logging.getLogger(__name__).info("整片末尾时长容差: %.3fs", options.tail_tolerance)
+            encoder = Encoder(
+                toolchain,
+                config,
+                runner,
+                layout,
+                events.progress,
+                tail_tolerance=options.tail_tolerance,
+            )
             records = _execute(plan, options, encoder, recorder, events)
             return OptimizationResult(plan, records, tuple(failures))

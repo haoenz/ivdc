@@ -18,6 +18,7 @@ from ivdc.probe_runtime import (
     probe_environment,
     probe_many,
     probe_media,
+    probe_video_timeline,
 )
 from ivdc.runner import CommandResult, ProcessRunner
 
@@ -160,3 +161,61 @@ def test_detect_gpu_accepts_successful_nvidia_smi(monkeypatch, runner) -> None:
     monkeypatch.setattr(probe_runtime.shutil, "which", lambda name: "C:/nvidia-smi.exe")
     monkeypatch.setattr(runner, "capture", lambda argv, **kw: _result(argv, stdout="GPU 0: X"))
     assert detect_gpu(runner) is True
+
+
+@pytest.mark.parametrize("duration_key", ["duration_time", "pkt_duration_time"])
+def test_video_timeline_uses_decoded_frames_and_streams_diagnostics(
+    monkeypatch, tmp_path, runner, duration_key
+):
+    def stream(argv, *, on_output):
+        assert "-show_frames" in argv
+        assert "-err_detect" in argv
+        for line in (
+            f"pts_time=0.080000|{duration_key}=0.040000|",
+            "",
+            f"pts_time=0.120000|{duration_key}=N/A",
+            f"pts_time=0.150356|{duration_key}=0.040000",
+        ):
+            on_output(line)
+        return _result(argv)
+
+    monkeypatch.setattr(runner, "stream", stream)
+    timeline = probe_video_timeline(TOOLCHAIN, tmp_path / "source.mp4", runner)
+    assert timeline.timestamps == (0.08, 0.12, 0.150356)
+    assert timeline.last_duration == 0.04
+
+
+@pytest.mark.parametrize(
+    "lines,returncode",
+    [
+        ([], 0),
+        (["pts_time=N/A|duration_time=0.04"], 0),
+        (["pts_time=nan|duration_time=0.04"], 0),
+        (["pts_time=0|duration_time=0.04", "decoder error"], 0),
+        (["pts_time=0|duration_time=0.04"], 1),
+    ],
+)
+def test_video_timeline_fails_closed(monkeypatch, tmp_path, runner, lines, returncode):
+    def stream(argv, *, on_output):
+        for line in lines:
+            on_output(line)
+        return _result(argv, returncode=returncode)
+
+    monkeypatch.setattr(runner, "stream", stream)
+    with pytest.raises(MediaError):
+        probe_video_timeline(TOOLCHAIN, tmp_path / "source.mp4", runner)
+
+
+@pytest.mark.parametrize("duration", ["N/A", "0"])
+def test_video_timeline_preserves_frames_when_last_duration_is_unknown(
+    monkeypatch, tmp_path, runner, duration
+):
+    def stream(argv, *, on_output):
+        on_output("pts_time=0.000000|duration_time=0.040000")
+        on_output(f"pts_time=0.040000|duration_time={duration}")
+        return _result(argv)
+
+    monkeypatch.setattr(runner, "stream", stream)
+    timeline = probe_video_timeline(TOOLCHAIN, tmp_path / "source.mp4", runner)
+    assert timeline.timestamps == (0, 0.04)
+    assert timeline.last_duration is None

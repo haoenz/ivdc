@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from ivdc.encode import EncodingConfig, build_ffmpeg_args, preserve_stream_args
+from ivdc.encode import MP4_TIMING_ARGS, EncodingConfig, build_ffmpeg_args, preserve_stream_args
 from ivdc.errors import MediaError
 from ivdc.fs import CONCAT_LIST_NAME, IvdcLayout, concat_lines
 from ivdc.media_validation import validate_media
@@ -51,12 +51,15 @@ class Encoder:
         runner: ProcessRunner,
         layout: IvdcLayout,
         progress: ProgressCallback,
+        *,
+        tail_tolerance: float = 0.0,
     ) -> None:
         self.toolchain = toolchain
         self.config = config
         self.runner = runner
         self.layout = layout
         self.progress = progress
+        self.tail_tolerance = tail_tolerance
 
     def encode(self, task: VideoTask, target: Path, segment: Segment | None = None) -> None:
         key = (task.name, None if segment is None else segment.index)
@@ -115,6 +118,8 @@ class Encoder:
             decode=decode,
             start=start,
             video_only=video_only,
+            source=task.path,
+            tail_tolerance=self.tail_tolerance,
         )
 
     def segment(self, task: VideoTask, part: Segment, context: SegmentContext) -> SegmentResult:
@@ -184,6 +189,7 @@ class Encoder:
                 "-i",
                 task.path,
                 *preserve_stream_args(reference, original_input=1, video_input=0),
+                *MP4_TIMING_ARGS,
                 "-f",
                 "mp4",
                 target,
