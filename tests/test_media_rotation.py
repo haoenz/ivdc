@@ -69,7 +69,9 @@ def test_display_rotation_keeps_orientation_and_full_picture(
         "ivdc.optimization_plan.plan_segments",
         lambda duration, _, **kw: plan_segments(duration, 1, **kw),
     )
-    options = OptimizeOptions(tmp_path, cuda="off", segment_minutes=0 if mode == "whole" else 1)
+    options = OptimizeOptions(
+        tmp_path, cuda="off", segment_minutes=0 if mode == "whole" else 1, allow_larger=True
+    )
     if mode == "resume":
 
         def interrupted(*args):

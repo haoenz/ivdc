@@ -77,6 +77,8 @@ def _options(root: Path, **kwargs: object) -> OptimizeOptions:
     kwargs.setdefault("codec", "x265")
     kwargs.setdefault("cuda", "off")
     kwargs.setdefault("workers", 1)
+    # 这些用例检查编码与提交机制；体积策略由专门的用例覆盖。
+    kwargs.setdefault("allow_larger", True)
     return OptimizeOptions(path=root, **kwargs)  # type: ignore[arg-type]
 
 
@@ -229,6 +231,60 @@ def test_log_and_manifest_are_written(
     assert record.status == "ok"
     assert record.codec == "hevc"
     assert record.new_bytes > 0
+
+
+def test_larger_output_keeps_original_and_is_reported(
+    console_pair: tuple[Console, StringIO], sample: Path, videos: Path, monkeypatch
+) -> None:
+    from ivdc.encoding import Encoder
+
+    original = sample.read_bytes()
+
+    def encode_larger(self, task, target, segment=None) -> None:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"x" * (task.path.stat().st_size + 1))
+
+    monkeypatch.setattr(Encoder, "encode", encode_larger)
+    console, stream = console_pair
+
+    assert execute_optimize(_options(videos, allow_larger=False), console) == EXIT_OK
+
+    layout = IvdcLayout(videos)
+    assert sample.read_bytes() == original
+    assert _codec(sample) == "h264"
+    assert not layout.tmp(SAMPLE).exists()
+    record = load_manifest(layout).get(SAMPLE)
+    assert record is not None
+    assert record.status == "kept"
+    assert (record.old_bytes, record.new_bytes) == (len(original), len(original) + 1)
+    output = stream.getvalue()
+    assert "保留原文件" in output
+    assert "保留原文件 1 个" in output
+    logs = list(layout.logs_dir.glob("*.log"))
+    assert len(logs) == 1
+    assert "保留原文件" in logs[0].read_text(encoding="utf-8")
+
+
+def test_allow_larger_replaces_source(
+    console_pair: tuple[Console, StringIO], sample: Path, videos: Path, monkeypatch
+) -> None:
+    from ivdc.encoding import Encoder
+
+    original = sample.read_bytes()
+
+    def encode_larger(self, task, target, segment=None) -> None:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"x" * (task.path.stat().st_size + 1))
+
+    monkeypatch.setattr(Encoder, "encode", encode_larger)
+    console, _ = console_pair
+
+    assert execute_optimize(_options(videos, allow_larger=True), console) == EXIT_OK
+
+    assert sample.read_bytes() == b"x" * (len(original) + 1)
+    record = load_manifest(IvdcLayout(videos)).get(SAMPLE)
+    assert record is not None
+    assert record.status == "ok"
 
 
 @pytest.mark.parametrize("segment_minutes", [0, 1])

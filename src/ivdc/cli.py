@@ -118,6 +118,10 @@ def opt(
             "--keep-backup/--no-keep-backup", help="成功后保留本次新建备份；已有备份始终保留"
         ),
     ] = True,
+    allow_larger: Annotated[
+        bool,
+        typer.Option("--allow-larger", help="转码后体积更大时仍替换原文件；默认保留原文件"),
+    ] = False,
     mask: Annotated[
         bool, typer.Option("--mask", help="匿名显示文件名、错误和终端诊断；debug 不取消匿名")
     ] = False,
@@ -139,6 +143,7 @@ def opt(
             tail_tolerance=tail_tolerance,
             log_file=log,
             keep_backup=keep_backup,
+            allow_larger=allow_larger,
             mask=mask,
             debug=debug,
             dry_run=dry_run,

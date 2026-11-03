@@ -68,11 +68,22 @@ def recover_backups(layout: IvdcLayout, manifest: Manifest | None = None) -> Rec
     return report
 
 
+@dataclass(frozen=True)
+class CommitResult:
+    """一次提交的体积对照；kept_source 表示成片更大而被丢弃。"""
+
+    old_bytes: int
+    new_bytes: int
+    kept_source: bool = False
+
+
 @dataclass
 class FileTransaction:
     layout: IvdcLayout
     name: str
     keep_backup: bool
+    # 默认保留原文件：转码后体积更大时替换只会让文件变差。
+    replace_if_larger: bool = False
     created_backup: bool = False
 
     @property
@@ -92,13 +103,19 @@ class FileTransaction:
             atomic_copy(self.source, backup)
             self.created_backup = True
 
-    def commit(self) -> tuple[int, int]:
+    def commit(self) -> CommitResult:
         old_bytes = self.source.stat().st_size
         new_bytes = self.output.stat().st_size
-        os.replace(self.output, self.source)
+        kept_source = new_bytes > old_bytes and not self.replace_if_larger
+        if kept_source:
+            # 成片没有变小，替换没有收益；丢弃临时输出，源文件保持原样。
+            discard_file(self.output)
+        else:
+            os.replace(self.output, self.source)
+        # 备份保留策略与成功提交一致；保留原文件时同样尊重 --no-keep-backup。
         if not self.keep_backup and self.created_backup:
             discard_file(self.layout.backup(self.name))
-        return old_bytes, new_bytes
+        return CommitResult(old_bytes, new_bytes, kept_source)
 
     def rollback(self) -> None:
         # 提交是单次原子替换；失败时源文件仍在原位。

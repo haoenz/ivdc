@@ -11,7 +11,7 @@ from ivdc.config import load_config
 from ivdc.encode import resolve_encode_config
 from ivdc.encoding import Encoder, ProgressCallback, SegmentResult
 from ivdc.errors import MediaError, SetupError
-from ivdc.fs import STATUS_FAILED, STATUS_OK, FileRecord, IvdcLayout
+from ivdc.fs import STATUS_FAILED, STATUS_KEPT, STATUS_OK, FileRecord, IvdcLayout
 from ivdc.optimization_plan import (
     OptimizationPlan,
     OptimizeOptions,
@@ -34,6 +34,8 @@ from ivdc.store import (
     validate_state_directory,
 )
 
+KEPT_SOURCE_MESSAGE = "转码后体积更大，已保留原文件"
+
 
 @dataclass(frozen=True)
 class OptimizationEvents:
@@ -55,16 +57,28 @@ class OptimizationResult:
 
 
 def _record(
-    task: VideoTask, codec: str, started: float, *, error: str = "", sizes: tuple[int, int] = (0, 0)
+    task: VideoTask,
+    codec: str,
+    started: float,
+    *,
+    error: str = "",
+    sizes: tuple[int, int] = (0, 0),
+    kept: bool = False,
 ) -> FileRecord:
+    if error:
+        status, message = STATUS_FAILED, error
+    elif kept:
+        status, message = STATUS_KEPT, KEPT_SOURCE_MESSAGE
+    else:
+        status, message = STATUS_OK, ""
     return FileRecord(
         task.name,
-        STATUS_FAILED if error else STATUS_OK,
+        status,
         codec,
         *sizes,
         time.monotonic() - started,
         now_iso(),
-        error,
+        message,
     )
 
 
@@ -75,8 +89,14 @@ def _whole(task: VideoTask, encoder: Encoder, transaction: FileTransaction) -> F
         transaction.prepare()
         encoder.encode(task, transaction.output)
         encoder.runner.check_cancelled()
-        sizes = transaction.commit()
-        return _record(task, encoder.config.codec_name, started, sizes=sizes)
+        commit = transaction.commit()
+        return _record(
+            task,
+            encoder.config.codec_name,
+            started,
+            sizes=(commit.old_bytes, commit.new_bytes),
+            kept=commit.kept_source,
+        )
     except (OSError, MediaError, CommandError) as exc:
         return _record(task, encoder.config.codec_name, started, error=str(exc))
     finally:
@@ -110,7 +130,9 @@ def _execute(
             if task.error:
                 finish(_record(task, encoder.config.codec_name, started, error=task.error))
                 continue
-            transaction = FileTransaction(encoder.layout, task.name, options.keep_backup)
+            transaction = FileTransaction(
+                encoder.layout, task.name, options.keep_backup, options.allow_larger
+            )
             if not task.segments:
                 whole_jobs[pool.submit(_whole, task, encoder, transaction)] = task
                 continue
@@ -146,7 +168,7 @@ def _execute(
                 try:
                     encoder.concatenate(task, results, transaction.output)
                     encoder.runner.check_cancelled()
-                    sizes = transaction.commit()
+                    commit = transaction.commit()
                 except (OSError, MediaError, CommandError) as exc:
                     record = _record(
                         task,
@@ -156,7 +178,13 @@ def _execute(
                     )
                 else:
                     remove_tree(encoder.layout.seg_dir(task.name))
-                    record = _record(task, encoder.config.codec_name, started, sizes=sizes)
+                    record = _record(
+                        task,
+                        encoder.config.codec_name,
+                        started,
+                        sizes=(commit.old_bytes, commit.new_bytes),
+                        kept=commit.kept_source,
+                    )
                 finish(record)
         finally:
             # 仅清理拼接临时文件；分片由线程池回收后仍保留以供恢复。

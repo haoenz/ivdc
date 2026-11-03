@@ -22,6 +22,7 @@ __all__ = [
     "format_download_line",
     "format_download_status",
     "format_fail_line",
+    "format_kept_line",
     "format_log_line",
     "format_media_size",
     "format_size_mib",
@@ -55,15 +56,24 @@ def _format_minutes(minutes: float) -> str:
     return f"{minutes:.1f}"
 
 
-def format_log_line(day: date, name: str, old_bytes: int, new_bytes: int, minutes: float) -> str:
+def format_log_line(
+    day: date,
+    name: str,
+    old_bytes: int,
+    new_bytes: int,
+    minutes: float,
+    *,
+    note: str = "",
+) -> str:
     """压制成功写入日志的一行。
 
-    格式：``26-09-11 a.mp4 | 1,234MB -> 567MB | 3.5m``
+    格式：``26-09-11 a.mp4 | 1,234MB -> 567MB | 3.5m``；有附注时在末尾追加 `` | 附注``。
     """
+    tail = f" | {note}" if note else ""
     return (
         f"{day:%y-%m-%d} {name} | "
         f"{format_size_mib(old_bytes)}MB -> {format_size_mib(new_bytes)}MB | "
-        f"{_format_minutes(minutes)}m"
+        f"{_format_minutes(minutes)}m{tail}"
     )
 
 
@@ -77,6 +87,14 @@ def format_done_line(name: str, old_bytes: int, new_bytes: int, minutes: float) 
     return (
         f"✓ {name} | {format_size_mib(old_bytes)}MB -> "
         f"{format_size_mib(new_bytes)}MB | {_format_minutes(minutes)}m"
+    )
+
+
+def format_kept_line(name: str, old_bytes: int, new_bytes: int, minutes: float, note: str) -> str:
+    """转码后体积更大、保留原文件后打印到屏幕的一行。"""
+    return (
+        f"⚠ {name} | {format_size_mib(old_bytes)}MB -> "
+        f"{format_size_mib(new_bytes)}MB | {_format_minutes(minutes)}m（{note}）"
     )
 
 

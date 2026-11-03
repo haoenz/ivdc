@@ -13,6 +13,7 @@ from ivdc.fs import (
     MANIFEST_VERSION,
     STATE_DIR_NAME,
     STATUS_FAILED,
+    STATUS_KEPT,
     STATUS_OK,
     FileRecord,
     IvdcLayout,
@@ -90,6 +91,25 @@ def test_manifest_round_trip_through_json() -> None:
     assert record is not None
     assert record.new_bytes == 50
     assert record.seconds == pytest.approx(12.346)
+    assert restored.is_done("a.mp4") is True
+
+
+def test_manifest_kept_record_is_done_and_round_trips() -> None:
+    manifest = Manifest()
+    manifest.record(
+        FileRecord(
+            name="a.mp4",
+            status=STATUS_KEPT,
+            codec="hevc",
+            old_bytes=100,
+            new_bytes=120,
+            message="转码后体积更大，已保留原文件",
+        )
+    )
+
+    restored = Manifest.from_dict(json.loads(json.dumps(manifest.as_dict())))
+
+    assert restored.get("a.mp4") == manifest.get("a.mp4")
     assert restored.is_done("a.mp4") is True
 
 

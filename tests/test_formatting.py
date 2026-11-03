@@ -12,6 +12,7 @@ from ivdc.formatting import (
     format_download_line,
     format_download_status,
     format_fail_line,
+    format_kept_line,
     format_log_line,
     format_media_size,
     format_size_mib,
@@ -58,6 +59,20 @@ def test_format_fail_line() -> None:
 def test_format_done_line() -> None:
     line = format_done_line("a.mp4", 2 * 1024 * 1024, 1024 * 1024, 1.25)
     assert line == "✓ a.mp4 | 2MB -> 1MB | 1.2m"
+
+
+def test_format_log_line_with_note() -> None:
+    line = format_log_line(
+        date(2026, 9, 11), "a.mp4", 1024 * 1024, 2 * 1024 * 1024, 3.456, note="体积更大"
+    )
+    assert line == "26-09-11 a.mp4 | 1MB -> 2MB | 3.5m | 体积更大"
+
+
+def test_format_kept_line() -> None:
+    line = format_kept_line(
+        "a.mp4", 1024 * 1024, 2 * 1024 * 1024, 1.25, "转码后体积更大，已保留原文件"
+    )
+    assert line == "⚠ a.mp4 | 1MB -> 2MB | 1.2m（转码后体积更大，已保留原文件）"
 
 
 def test_format_download_line_with_and_without_size() -> None:

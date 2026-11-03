@@ -23,6 +23,7 @@ STATE_DIR_NAME = ".ivdc"
 CONCAT_LIST_NAME = "concat_list.txt"
 
 STATUS_OK = "ok"
+STATUS_KEPT = "kept"
 STATUS_FAILED = "failed"
 
 MANIFEST_VERSION = 1
@@ -32,6 +33,7 @@ __all__ = [
     "MANIFEST_VERSION",
     "STATE_DIR_NAME",
     "STATUS_FAILED",
+    "STATUS_KEPT",
     "STATUS_OK",
     "FileRecord",
     "IvdcLayout",
@@ -143,7 +145,7 @@ class FileRecord:
             or ".." in Path(name).parts
         ):
             raise ValueError("记录名称必须是安全的相对路径")
-        if status not in (STATUS_OK, STATUS_FAILED):
+        if status not in (STATUS_OK, STATUS_KEPT, STATUS_FAILED):
             raise ValueError(f"记录状态无效: {status!r}")
         values = {key: payload.get(key, "") for key in ("codec", "finished_at", "message")}
         if any(not isinstance(value, str) for value in values.values()):
@@ -180,8 +182,9 @@ class Manifest:
         return self.entries.get(name)
 
     def is_done(self, name: str) -> bool:
+        # 保留原文件同样是处理完成的结果，不能把对应备份当作中断残留去还原。
         record = self.entries.get(name)
-        return record is not None and record.status == STATUS_OK
+        return record is not None and record.status in (STATUS_OK, STATUS_KEPT)
 
     def as_dict(self) -> dict[str, object]:
         return {

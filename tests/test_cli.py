@@ -89,6 +89,7 @@ def test_help_exposes_python_options():
     # CI 中 Typer 的 ANSI 样式可能将选项名拆开，按可见文本检查。
     help_text = Text.from_ansi(result.stdout).plain
     assert "--dry-run" in help_text
+    assert "--allow-larger" in help_text
     assert "--workers" in help_text
     assert "--quality" in help_text
     assert "--crf" not in help_text

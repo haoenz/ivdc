@@ -53,7 +53,8 @@ def assert_protected(source, console_pair):
     layout = IvdcLayout(source.parent)
     assert (
         execute_optimize(
-            OptimizeOptions(source.parent, cuda="off", keep_backup=False), console_pair[0]
+            OptimizeOptions(source.parent, cuda="off", keep_backup=False, allow_larger=True),
+            console_pair[0],
         )
         == 1
     ), console_pair[1].getvalue()
@@ -190,9 +191,10 @@ def test_irregular_close_tail_frames_pass_full_decode(tmp_path, console_pair):
         check=True,
         capture_output=True,
     )
-    assert execute_optimize(OptimizeOptions(tmp_path, cuda="off"), console_pair[0]) == 0, (
-        console_pair[1].getvalue()
-    )
+    assert (
+        execute_optimize(OptimizeOptions(tmp_path, cuda="off", allow_larger=True), console_pair[0])
+        == 0
+    ), console_pair[1].getvalue()
     with ProcessRunner() as runner:
         info = probe_media(find_toolchain(), source, runner)
     assert info.codec_name == "hevc"
@@ -230,9 +232,12 @@ def test_submillisecond_video_offset_survives_mp4_muxing(source, console_pair):
         toolchain = find_toolchain()
         before = probe_media(toolchain, shifted, runner)
         old_frames = probe_video_timeline(toolchain, shifted, runner)
-    assert execute_optimize(OptimizeOptions(shifted.parent, cuda="off"), console_pair[0]) == 0, (
-        console_pair[1].getvalue()
-    )
+    assert (
+        execute_optimize(
+            OptimizeOptions(shifted.parent, cuda="off", allow_larger=True), console_pair[0]
+        )
+        == 0
+    ), console_pair[1].getvalue()
     with ProcessRunner() as runner:
         after = probe_media(toolchain, shifted, runner)
         new_frames = probe_video_timeline(toolchain, shifted, runner)
@@ -259,7 +264,7 @@ def test_missing_source_tail_respects_default_and_overrides_through_whole_pipeli
 
     monkeypatch.setattr("ivdc.optimization_plan.probe_many", inaccurate_metadata)
     monkeypatch.setattr("ivdc.media_validation.probe_video_timeline", missing_tail)
-    options = OptimizeOptions(source.parent, cuda="off")
+    options = OptimizeOptions(source.parent, cuda="off", allow_larger=True)
     if tail_tolerance is not None:
         options = replace(options, tail_tolerance=tail_tolerance)
     code = execute_optimize(options, console_pair[0])

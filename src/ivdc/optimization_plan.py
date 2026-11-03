@@ -33,6 +33,7 @@ class OptimizeOptions:
     segment_minutes: int = DEFAULT_SEGMENT_MINUTES
     log_file: Path | None = None
     keep_backup: bool = True
+    allow_larger: bool = False
     mask: bool = False
     debug: bool = False
     dry_run: bool = False

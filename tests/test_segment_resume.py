@@ -62,6 +62,7 @@ def media(tmp_path):
             segment_minutes=1,
             keep_backup=False,
             workers=2,
+            allow_larger=True,
         ),
     )
 
@@ -286,7 +287,7 @@ def test_fractional_frame_rate_with_audio_and_subframe_tail(tmp_path, console_pa
         lambda duration, _, **kw: plan_segments(duration, 1, **kw),
     )
     console, output = console_pair
-    options = OptimizeOptions(tmp_path, cuda="off", segment_minutes=1, workers=2)
+    options = OptimizeOptions(tmp_path, cuda="off", segment_minutes=1, workers=2, allow_larger=True)
     assert execute_optimize(options, console) == EXIT_OK, output.getvalue()
     assert video_duration(source) == pytest.approx(3.003, abs=0.017)
     assert FFPROBE is not None
@@ -324,7 +325,7 @@ def test_fractional_frame_rate_at_actual_minute_boundary(tmp_path, console_pair)
     console, output = console_pair
     assert (
         execute_optimize(
-            OptimizeOptions(tmp_path, cuda="off", segment_minutes=1, workers=2),
+            OptimizeOptions(tmp_path, cuda="off", segment_minutes=1, workers=2, allow_larger=True),
             console,
         )
         == EXIT_OK

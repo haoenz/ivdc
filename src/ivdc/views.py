@@ -19,11 +19,12 @@ from ivdc.formatting import (
     format_done_line,
     format_download_line,
     format_download_status,
+    format_kept_line,
     format_media_size,
     progress_percent,
     shorten_label,
 )
-from ivdc.fs import STATUS_OK, FileRecord
+from ivdc.fs import STATUS_KEPT, STATUS_OK, FileRecord
 from ivdc.optimization_plan import OptimizationPlan, OptimizeOptions
 from ivdc.optimize import OptimizationEvents, OptimizationResult
 from ivdc.progress import ProgressDisplay
@@ -192,6 +193,13 @@ class OptimizationDisplay:
                 format_done_line(label, record.old_bytes, record.new_bytes, record.seconds / 60),
                 STYLE_DONE,
             )
+        elif record.status == STATUS_KEPT:
+            self.display.log(
+                format_kept_line(
+                    label, record.old_bytes, record.new_bytes, record.seconds / 60, record.message
+                ),
+                STYLE_WARN,
+            )
         else:
             message = error_message(record.message, mask=self.options.mask, summary="详见处理日志")
             self.display.log(f"压制失败 ({label}): {message}", STYLE_FAIL)
@@ -200,16 +208,19 @@ class OptimizationDisplay:
         if self.options.dry_run:
             return
         succeeded = sum(record.status == STATUS_OK for record in result.records)
+        kept = sum(record.status == STATUS_KEPT for record in result.records)
         for failure in result.failures:
             emit(
                 self.console,
                 error_message(failure, mask=self.options.mask, summary="恢复或清理失败"),
                 STYLE_WARN,
             )
+        kept_part = f"保留原文件 {kept} 个，" if kept else ""
         emit(
             self.console,
-            f"完成: 成功 {succeeded} 个，失败 {len(result.records) - succeeded} 个。",
-            STYLE_WARN if result.failed else STYLE_DONE,
+            f"完成: 成功 {succeeded} 个，{kept_part}失败 "
+            f"{len(result.records) - succeeded - kept} 个。",
+            STYLE_WARN if result.failed or kept else STYLE_DONE,
         )
 
 

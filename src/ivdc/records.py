@@ -8,7 +8,7 @@ from typing import Self
 
 from ivdc.errors import StorageError
 from ivdc.formatting import format_fail_line, format_log_line
-from ivdc.fs import STATUS_OK, FileRecord, IvdcLayout, Manifest
+from ivdc.fs import STATUS_FAILED, FileRecord, IvdcLayout, Manifest
 from ivdc.store import save_manifest
 
 
@@ -69,7 +69,10 @@ class ResultRecorder:
             save_manifest(self.layout, self.manifest)
         except OSError as exc:
             raise StorageError(f"无法保存 {self.layout.manifest_path}: {exc}") from exc
-        if record.status == STATUS_OK:
+        if record.status == STATUS_FAILED:
+            self.result_logger.warning(format_fail_line(date.today(), record.name, record.message))
+        else:
+            # 保留原文件也写入体积对照，附注说明为什么没有替换。
             self.result_logger.info(
                 format_log_line(
                     date.today(),
@@ -77,7 +80,6 @@ class ResultRecorder:
                     record.old_bytes,
                     record.new_bytes,
                     record.seconds / 60,
+                    note=record.message,
                 )
             )
-        else:
-            self.result_logger.warning(format_fail_line(date.today(), record.name, record.message))

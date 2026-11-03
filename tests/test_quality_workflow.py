@@ -112,7 +112,12 @@ def test_configured_levels_reach_real_whole_and_segment_encoding_and_logs(
     monkeypatch.setattr(ProcessRunner, "stream", capture_encoding)
     console, output = console_pair
     options = OptimizeOptions(
-        source.parent, codec=codec, cuda="off", quality=quality, segment_minutes=segment_minutes
+        source.parent,
+        codec=codec,
+        cuda="off",
+        quality=quality,
+        segment_minutes=segment_minutes,
+        allow_larger=True,
     )
     assert execute_optimize(options, console) == EXIT_OK, output.getvalue()
     assert len(commands) == 1
@@ -157,7 +162,7 @@ def test_resume_uses_effective_numeric_quality_not_just_level_name(
     media, tmp_path, monkeypatch, console_pair, changed_level
 ):
     source, layout = media
-    options = OptimizeOptions(source.parent, cuda="off", segment_minutes=1)
+    options = OptimizeOptions(source.parent, cuda="off", segment_minutes=1, allow_larger=True)
     console, output = console_pair
 
     def fail_concat(*args):

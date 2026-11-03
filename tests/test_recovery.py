@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from ivdc.errors import StorageError
-from ivdc.fs import STATUS_FAILED, STATUS_OK, FileRecord, IvdcLayout, Manifest
+from ivdc.fs import STATUS_FAILED, STATUS_KEPT, STATUS_OK, FileRecord, IvdcLayout, Manifest
 from ivdc.recovery import pending_backups, recover_backups
 from ivdc.store import save_manifest
 
@@ -70,7 +70,7 @@ def test_recover_backups_without_state_dir_is_a_noop(layout: IvdcLayout) -> None
 
 
 @pytest.mark.parametrize("name", ["a.mp4", "子目录/a.mp4"])
-@pytest.mark.parametrize("status", [STATUS_OK, STATUS_FAILED, None])
+@pytest.mark.parametrize("status", [STATUS_OK, STATUS_KEPT, STATUS_FAILED, None])
 def test_missing_source_recovery_respects_latest_record(layout, name, status):
     backup = layout.backup(name)
     backup.parent.mkdir(parents=True)
@@ -81,13 +81,14 @@ def test_missing_source_recovery_respects_latest_record(layout, name, status):
         manifest.record(FileRecord(name, status))
     save_manifest(layout, manifest)
 
-    expected = [] if status == STATUS_OK else [name]
+    settled = status in (STATUS_OK, STATUS_KEPT)
+    expected = [] if settled else [name]
     assert list(pending_backups(layout)) == expected
     report = recover_backups(layout)
 
     assert report.restored == expected
     assert report.failures == []
-    assert (layout.root / name).exists() == (status != STATUS_OK)
+    assert (layout.root / name).exists() == (not settled)
     assert backup.read_bytes() == b"original"
 
 
@@ -153,3 +154,37 @@ def test_backup_path_directory_does_not_allow_unprotected_commit(layout):
     with pytest.raises(IsADirectoryError):
         FileTransaction(layout, "a.mp4", True).prepare()
     assert source.read_bytes() == b"source"
+
+
+def test_commit_keeps_source_when_output_is_larger(layout: IvdcLayout) -> None:
+    from ivdc.recovery import FileTransaction
+
+    source = layout.root / "a.mp4"
+    source.write_bytes(b"source" * 10)
+    transaction = FileTransaction(layout, "a.mp4", True)
+    transaction.prepare()
+    transaction.output.write_bytes(b"x" * (source.stat().st_size + 1))
+
+    result = transaction.commit()
+
+    assert result.kept_source is True
+    assert (result.old_bytes, result.new_bytes) == (60, 61)
+    assert source.read_bytes() == b"source" * 10
+    assert not transaction.output.exists()
+    assert layout.backup("a.mp4").read_bytes() == b"source" * 10
+
+
+def test_commit_replaces_larger_output_when_allowed(layout: IvdcLayout) -> None:
+    from ivdc.recovery import FileTransaction
+
+    source = layout.root / "a.mp4"
+    source.write_bytes(b"source")
+    transaction = FileTransaction(layout, "a.mp4", True, replace_if_larger=True)
+    transaction.prepare()
+    transaction.output.write_bytes(b"x" * 16)
+
+    result = transaction.commit()
+
+    assert result.kept_source is False
+    assert source.read_bytes() == b"x" * 16
+    assert not transaction.output.exists()
